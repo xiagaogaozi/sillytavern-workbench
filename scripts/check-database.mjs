@@ -1,0 +1,29 @@
+// Small prototype checks: native document round trips, batch identities and AI boundaries.
+import assert from 'node:assert/strict';
+import * as c from '../src/core.js';
+import * as db from '../src/database-model.js';
+globalThis.location={origin:'http://test.invalid',hash:'#check'};
+globalThis.window={addEventListener(){}};
+const {editingContext,proposalFrom,defaultTemplates}=await import('../src/ai.js');
+const taskA={...db.make('plot'),id:'a',name:'A',custom:{keep:1}};
+const taskB={...db.make('plot'),id:'b',name:'B',agentControl:{dependsOnTaskIds:['a'],blocksTaskIds:[]}};
+const raw={name:'source',plotTasks:[taskA,taskB],vendor:{keep:true},finalSystemDirective:'Keep'};
+const source=c.createDraft('plot',raw,'source',true),target=c.createDraft('plot',db.empty('plot'));
+let map;c.commit(target,'copy',()=>map=c.transfer(source,target,['b','a']));
+assert.deepEqual(source.raw,raw);assert.equal(map[0].oldId,'a');assert.equal(target.raw.plotTasks[1].agentControl.dependsOnTaskIds[0],map[0].newId);assert.deepEqual(target.raw.plotTasks[0].custom,{keep:1});
+c.undo(target);assert.equal(target.raw.plotTasks.length,0);c.undo(target,1);assert.equal(target.raw.plotTasks.length,2);
+c.commit(source,'batch disable',()=>source.raw.plotTasks.forEach(t=>c.setEnabled(source,t.id,false)));assert.ok(source.raw.plotTasks.every(t=>!t.enabled));c.undo(source);assert.deepEqual(source.raw,raw);
+const group={name:'replace',promptGroup:[{role:'SYSTEM',content:'Main',mainSlot:'A',deletable:false},{role:'USER',content:'One',extra:{keep:true}},{role:'ASSISTANT',content:'Two'}],unknown:1};
+const d=c.createDraft('contentReplace',group,'replace',true),ids=c.entries(d).map(e=>e.id);
+c.commit(d,'move',()=>c.moveEntries(d,[ids[2]],ids[1]));assert.equal(c.entries(d)[1].id,ids[2]);c.undo(d);assert.deepEqual(c.entries(d).map(e=>e.id),ids);assert.deepEqual(d.raw,group);
+assert.throws(()=>c.commit(d,'delete main',()=>c.removeEntries(d,[ids[0]])),/槽位/);assert.deepEqual(d.raw,group);
+c.commit(d,'copy',()=>c.transfer(d,d,[ids[1],ids[2]]));assert.equal(d.raw.promptGroup.length,5);assert.deepEqual(d.raw.promptGroup[3].extra,{keep:true});c.undo(d);
+d.selected=[ids[1],ids[2]];const context=editingContext(d,{});assert.equal(context.selection.length,2);assert.equal(context.references.extra,undefined);assert.throws(()=>proposalFrom(d,{operations:[{type:'update',id:ids[0],fields:{content:'not allowed'}}]},context));
+const proposal=proposalFrom(d,{operations:[{type:'delete',id:ids[1]},{type:'update',id:ids[2],fields:{content:'Changed'}}]},context);c.commit(d,'accept',()=>c.applyOperations(d,proposal.operations));assert.equal(d.raw.promptGroup[1].content,'Changed');assert.equal(d.raw.unknown,1);c.undo(d);
+assert.throws(()=>c.validateOperations(d,[{type:'update',id:ids[1],fields:{enabled:false}}],ids),/不允许/);
+const table=c.createDraft('tableTemplate',db.empty('tableTemplate'));let key;c.commit(table,'add',()=>key=c.addEntry(table,db.make('tableTemplate')));c.commit(table,'copy',()=>c.transfer(table,table,[key]));assert.equal(c.entries(table).length,2);assert.notEqual(c.entries(table)[0].name,c.entries(table)[1].name);assert.notEqual(c.entries(table)[0].raw.uid,c.entries(table)[1].raw.uid);assert.deepEqual(db.audit(table),[]);
+assert.throws(()=>c.validateOperations(table,[{type:'update',id:key,fields:{sourceData:{script:'eval()'}}}],[key]),/不允许/);
+for(const kind of Object.keys(db.DATABASE_KINDS))assert.ok(defaultTemplates()[kind]);
+console.log('PASS: database native roundtrip, dependency remap, prompt identities/slots, batch undo, AI scope and safe fields.');
+
+const sameLeft=c.createDraft('plot',raw,'same',true),sameRight=c.createDraft('plot',raw,'same',true);c.commit(sameRight,'copy',()=>c.transfer(sameLeft,sameRight,['a'],'b'));const pairs=c.pairEntries(sameRight,sameLeft);assert.equal(pairs.filter(p=>p.left?.id==='b' && p.right?.id==='b').length,1);assert.equal(pairs.filter(p=>!p.right).length,1);console.log('PASS: duplicated identical prompt bodies do not steal later stable-ID matches.');

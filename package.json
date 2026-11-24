@@ -1,0 +1,10 @@
+{
+    "name": "sillytavern-workbench",
+    "version": "0.7.1",
+    "private": false,
+    "license": "CC-BY-4.0",
+    "type": "module",
+    "scripts": {
+        "check": "node scripts/check.mjs && node scripts/check-database.mjs && node scripts/check-prompts.mjs && node scripts/check-database-replace.mjs"
+    }
+}

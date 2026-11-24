@@ -1,0 +1,21 @@
+{
+    "captured": "2026-10-27",
+    "scope": "Function and serialization reference only; remote bundles are not loaded by this extension.",
+    "spreset": {
+        "loaderSha256": "3dc23dcd6e3653675653ac5d65139fd5ed5050687123af1143cdb7a7b51ff783",
+        "editorSha256": "f14881da444ae942a6b662976b4338f57c137aa3a78fa0e42eac32607cf55489"
+    },
+    "worldbookPlus": {
+        "cdnVersion": "0.1.60",
+        "sha256": "dde2e24f2a76fbf22f9ce735a46b365f045415c3bd673af20fe79564de6eb7d3",
+        "githubBlob": "a22fa6af9b5a8321033b6e771a29cd112fc0581f"
+    },
+    "presetUpdateEditor": {
+        "version": "2.0.0",
+        "gitRevision": "bfd0db8"
+    },
+    "shujuku": {
+        "version": "1.2.9",
+        "reference": "Multi-role prompt segment architecture and native Chat Completion transport boundaries."
+    }
+}
