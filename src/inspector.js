@@ -203,14 +203,17 @@ export function renderCompareInspector(container, { leftDraft, rightDraft, pair,
                            <div class="field">
                                <label><span>A · ${esc(l.name)}</span>${l.marker ? '<span class="badge">占位只读</span>' : ''}</label>
                                <textarea data-cmp-edit="left" rows="16" ${l.marker ? 'readonly' : ''}>${esc(l.content ?? '')}</textarea>
+                               <div class="form-actions">
+                                   <button type="button" class="primary" data-cmp-save-side="left" ${l.marker ? 'disabled' : ''}>${svg('apply', 14)} 应用 A 修改到草稿</button>
+                               </div>
                            </div>
                            <div class="field">
                                <label><span>B · ${esc(r.name)}</span>${r.marker ? '<span class="badge">占位只读</span>' : ''}</label>
                                <textarea data-cmp-edit="right" rows="16" ${r.marker ? 'readonly' : ''}>${esc(r.content ?? '')}</textarea>
+                               <div class="form-actions">
+                                   <button type="button" class="primary" data-cmp-save-side="right" ${r.marker ? 'disabled' : ''}>${svg('apply', 14)} 应用 B 修改到草稿</button>
+                               </div>
                            </div>
-                       </div>
-                       <div class="form-actions full">
-                           <button type="button" class="primary" data-cmp-save-edit>${svg('apply', 14)} 应用两侧修改到草稿</button>
                        </div>`
                     : `${settingsHtml}
                        <div class="row" style="justify-content:space-between;font-size:11.5px">
@@ -240,12 +243,11 @@ export function renderCompareInspector(container, { leftDraft, rightDraft, pair,
     for (const b of $$('[data-cmp-mode]', container)) {
         b.onclick = () => actions.setCompareMode(b.dataset.cmpMode);
     }
-    const saveEditBtn = $('[data-cmp-save-edit]', container);
-    if (saveEditBtn) {
-        saveEditBtn.onclick = run(() => {
-            const leftVal = $('[data-cmp-edit="left"]', container)?.value;
-            const rightVal = $('[data-cmp-edit="right"]', container)?.value;
-            actions.saveCompareInline(l, r, leftVal, rightVal);
+    for (const btn of $$('[data-cmp-save-side]', container)) {
+        btn.onclick = run(() => {
+            const side = btn.dataset.cmpSaveSide;
+            const val = $(`[data-cmp-edit="${side}"]`, container)?.value;
+            actions.saveCompareSide(side, l, r, val);
         });
     }
     const curHit = $('.pww-hit.is-current', container);

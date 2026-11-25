@@ -1,4 +1,4 @@
-// 酒馆工作台 0.7.1：SPreset Editor 风格多标签三栏引擎 · 预设/世界书/角色卡/聊天记录/数据库一体管理
+// 酒馆工作台 0.7.2：SPreset Editor 风格多标签三栏引擎 · 预设/世界书/角色卡/聊天记录/数据库一体管理
 import {
     clone,
     uuid,
@@ -19,9 +19,8 @@ import {
     transfer,
     pairIndex,
     overwriteEntry,
-    folderMeta,
 } from './core.js';
-import { isDatabaseKind, isPromptKind } from './database-model.js';
+import { isDatabaseKind, isPromptKind, PROMPT_KINDS } from './database-model.js';
 import { isCharacterKind, sortCharacters } from './character-model.js';
 import { createChatController } from './chat-view.js';
 import * as prompts from './prompt-model.js';
@@ -71,6 +70,7 @@ const dbCatalogCache = new Map(); // kind -> { items, activeName, matchedActive 
 const listWindowState = new Map(); // tabId -> { limit, key }
 let navSelectMode = false;
 let navSelectedNames = new Set();
+let navLibKind = 'preset'; // 当前预设库展示的文档类型（不含角色卡和聊天记录）
 let navLibSearch = '';
 let navLibSortMode = 'default'; // 'default' | 'name'
 let navLibSortDir = 'asc'; // 'asc' | 'desc'
@@ -744,6 +744,7 @@ async function addTab(draft, opts = {}) {
         if (state.compare.enabled) state.compare.enabled = false;
         void ensureCharacterCatalog(false);
     } else {
+        navLibKind = draft.kind;
         if (navPaneMode === 'chats') navPaneMode = 'library';
         if (state.compare.enabled && !state.compare.rightTabId && state.compare.leftTabId !== id) {
             state.compare.rightTabId = id;
@@ -764,8 +765,11 @@ async function activateTab(id) {
     if (isCharacterKind(tab.kind)) {
         navPaneMode = 'characters';
         void ensureCharacterCatalog(false);
-    } else if (navPaneMode === 'chats' || isCharacterKind(activeTab()?.kind)) {
-        navPaneMode = 'library';
+    } else {
+        navLibKind = tab.kind;
+        if (navPaneMode === 'chats' || isCharacterKind(activeTab()?.kind)) {
+            navPaneMode = 'library';
+        }
     }
     state.activeTabId = id;
     state.mobilePane = 'list';
@@ -901,7 +905,6 @@ function tabIconName(kind) {
 
 function filteredEntries(d, v) {
     let list = entries(d);
-    if (v.folder) list = list.filter((e) => e.group === v.folder);
     if (v.group) list = list.filter((e) => e.group === v.group);
     if (v.status === 'enabled') list = list.filter((e) => e.enabled);
     else if (v.status === 'disabled') list = list.filter((e) => !e.enabled);
@@ -1134,23 +1137,9 @@ function renderHeaderTabs() {
     const canRedo = isChatMode ? chatCtrl.canRedo() : Boolean(d && d.cursor < (d.history?.length || 1) - 1);
 
     actBar.innerHTML =
-        iconBtn(
-            'character',
-            '角色卡管理',
-            'data-top="characters"',
-            navPaneMode === 'characters' && !state.navCollapsed && !state.compare.enabled ? 'active' : '',
-        ) +
-        iconBtn(
-            'chat',
-            '聊天记录汇总管理',
-            'data-top="chats"',
-            navPaneMode === 'chats' && !state.navCollapsed && !state.compare.enabled ? 'active' : '',
-        ) +
-        iconBtn('compare', '双条目三栏对比模式', 'data-top="compare"', state.compare.enabled ? 'active' : '') +
         iconBtn('undo', '撤销 (Ctrl+Z)', `data-top="undo" ${canUndo ? '' : 'disabled'}`) +
         iconBtn('redo', '重做 (Ctrl+Y)', `data-top="redo" ${canRedo ? '' : 'disabled'}`) +
-        iconBtn('ai', 'AI 编辑助手', 'data-top="ai"', state.inspectorTab === 'ai' && !state.compare.enabled ? 'active' : '') +
-        iconBtn('more', '更多功能（开关 / 整理 / 备份 / 设置）', 'data-top="more-menu"') +
+        iconBtn('more', '更多功能（对比 / AI / 开关 / 整理 / 备份 / 设置）', 'data-top="more-menu"') +
         iconBtn('close', '关闭工作台 (Esc)', 'data-top="close"');
 
     // 绑定标签页点击与右键菜单
@@ -1255,17 +1244,6 @@ function renderHeaderTabs() {
 
     // 顶栏 SVG 按钮事件
     const topHandlers = {
-        characters: async () => {
-            state.compare.enabled = false;
-            state.navCollapsed = false;
-            navPaneMode = 'characters';
-            state.mobilePane = 'nav';
-            persistMeta();
-            renderAll();
-            await ensureCharacterCatalog(false);
-        },
-        chats: () => openAllChatsView(),
-        compare: () => toggleCompareMode(),
         undo: () => {
             if (isChatMode) {
                 chatCtrl.undo();
@@ -1286,15 +1264,25 @@ function renderHeaderTabs() {
                 renderAll();
             }
         },
-        ai: () => {
-            if (state.compare.enabled) state.compare.enabled = false;
-            state.inspectorTab = state.inspectorTab === 'ai' ? 'content' : 'ai';
-            state.mobilePane = 'inspector';
-            renderAll();
-        },
         'more-menu': (btn) => {
             const cur = activeDraft();
             const items = [
+                {
+                    icon: 'compare',
+                    label: state.compare.enabled ? '退出双条目对比模式' : '双条目三栏对比模式',
+                    action: () => toggleCompareMode(),
+                },
+                {
+                    icon: 'ai',
+                    label: state.inspectorTab === 'ai' && !state.compare.enabled ? '返回条目编辑器' : 'AI 编辑助手',
+                    action: () => {
+                        if (state.compare.enabled) state.compare.enabled = false;
+                        state.inspectorTab = state.inspectorTab === 'ai' ? 'content' : 'ai';
+                        state.mobilePane = 'inspector';
+                        renderAll();
+                    },
+                },
+                '-',
                 { icon: 'power', label: '数据库功能开关（含未启用模块）', action: () => actions.openFeatureSwitchDialog() },
             ];
             if (cur) {
@@ -1593,17 +1581,31 @@ function renderNavPanel() {
         return;
     }
 
+    const wasLibraryView = Boolean($('[data-nav-kind-pick]', col));
+    const prevNavScroll = wasLibraryView ? $('.panel-scroll', col)?.scrollTop || 0 : 0;
+
     const v = tabView(tab);
     const isCharActive = Boolean(d && isCharacterKind(d.kind));
     const all = d && !isCharActive ? entries(d) : [];
 
     const presets = runtime.lists?.presets || [];
     const worlds = runtime.lists?.worldbooks || [];
-    const curKind = !tab || isCharacterKind(tab.kind) ? 'preset' : tab.kind;
+    const curKind = navLibKind || (!tab || isCharacterKind(tab.kind) ? 'preset' : tab.kind);
     const isDb = isDatabaseKind(curKind);
+    if (isDb && !dbCatalogCache.has(curKind)) {
+        prefetchDbCatalog(curKind);
+    }
 
+    const TOGGLEABLE_DOC_KINDS = new Set([
+        'preset',
+        'worldbook',
+        'plot',
+        'tableTemplate',
+        'promptContinuation',
+        'promptSimulation',
+    ]);
     let filterSection = '';
-    if (d && !isCharActive) {
+    if (d && !isCharActive && TOGGLEABLE_DOC_KINDS.has(d.kind)) {
         const filters = [
             ['all', '全部'],
             ['enabled', '已启用'],
@@ -1638,38 +1640,7 @@ function renderNavPanel() {
     }
 
     let groupSection = '';
-    if (d && !isDb && !isCharActive) {
-        const groups =
-            d.kind === 'worldbook'
-                ? folderMeta(d.raw).folders
-                : d.raw.extensions?.presetWorldbookWorkbench?.folders || [];
-        const groupCounts = new Map();
-        for (const e of all) {
-            if (e.group) groupCounts.set(e.group, (groupCounts.get(e.group) || 0) + 1);
-        }
-        groupSection = `
-            <div class="nav-section">
-                <div class="nav-section-head">
-                    <span>分组目录</span>
-                    ${iconBtn('plus', '新建分组', 'data-nav-act="new-folder"', 'sm')}
-                </div>
-                <div class="nav-list">
-                    <button type="button" class="nav-item ${!v.folder ? 'active' : ''}" data-nav-folder="">
-                        <span class="nav-item-label">全部分组</span><span class="nav-badge">${all.length}</span>
-                    </button>
-                    ${groups
-                        .map(
-                            (g) => `
-                        <button type="button" class="nav-item ${v.folder === g.id ? 'active' : ''}" data-nav-folder="${esc(g.id)}">
-                            <span class="nav-item-label">${esc(g.name)}</span>
-                            <span class="nav-badge">${groupCounts.get(g.id) || 0}</span>
-                        </button>`,
-                        )
-                        .join('')}
-                </div>
-            </div>
-        `;
-    } else if (d && isPromptKind(d.kind)) {
+    if (d && isPromptKind(d.kind)) {
         groupSection = `
             <div class="nav-section">
                 <div class="nav-section-head"><span>提示词分组</span></div>
@@ -1691,10 +1662,11 @@ function renderNavPanel() {
         `;
     }
 
-    // 预设库列表（去掉 · 预设库后缀，支持选择/取消与批量删除）
+    // 预设库列表（支持全部非角色卡/非聊天文档类型切换、排序、搜索与批量删除）
+    const dbLoading = isDb && !dbCatalogCache.has(curKind);
     const dbCat = isDb ? dbCatalogCache.get(curKind) || { items: [], activeName: '', matchedActive: false } : null;
     const dbItems = dbCat?.items || [];
-    const showUnmatchedLiveRow = Boolean(isDb && !dbCat?.matchedActive);
+    const showUnmatchedLiveRow = Boolean(isDb && !dbLoading && !dbCat?.matchedActive);
     const curPresetName = runtime.lists?.currentPreset || '';
 
     const selectableNames = isDb
@@ -1706,6 +1678,23 @@ function renderNavPanel() {
     for (const n of [...navSelectedNames]) if (!selectableNames.includes(n)) navSelectedNames.delete(n);
 
     const listTitle = isDb ? KIND_LABEL[curKind] : curKind === 'worldbook' ? '世界书' : '预设';
+    const kindOptionsHtml = [
+        ['preset', '预设'],
+        ['worldbook', '世界书'],
+    ]
+        .map(([k, l]) => `<option value="${k}" ${curKind === k ? 'selected' : ''}>${esc(l)}</option>`)
+        .join('') +
+        '<optgroup label="数据库">' +
+        [
+            ['plot', '剧情推进'],
+            ['tableTemplate', '表格模板'],
+            ['contentReplace', '正文替换'],
+            ...Object.entries(PROMPT_KINDS),
+        ]
+            .map(([k, l]) => `<option value="${k}" ${curKind === k ? 'selected' : ''}>${esc(l)}</option>`)
+            .join('') +
+        '</optgroup>';
+
     const rawLibEntries = isDb
         ? dbItems.map((item) => ({ name: item.name, isActive: Boolean(item.isActive) }))
         : selectableNames.map((name) => ({ name, isActive: curKind === 'preset' && name === curPresetName }));
@@ -1742,17 +1731,18 @@ function renderNavPanel() {
                 </label>`;
         }
         return `
-            <button type="button" class="nav-item ${d?.sourceName === name ? 'active' : ''}" data-nav-open-kind="${esc(curKind)}" data-nav-open-name="${esc(name)}" title="${esc(name)}${isActiveLive ? '（当前实际生效）' : ''}">
+            <button type="button" class="nav-item ${d?.kind === curKind && d?.sourceName === name ? 'active' : ''}" data-nav-open-kind="${esc(curKind)}" data-nav-open-name="${esc(name)}" title="${esc(name)}${isActiveLive ? '（当前实际生效）' : ''}">
                 ${isActiveLive ? '<span class="lamp-dot is-live" title="当前实际生效"></span>' : ''}
                 <span class="nav-item-label">${esc(name)}</span>
             </button>`;
     };
 
     const drawLibListHtml = () => {
+        if (dbLoading) return '<span class="muted" style="padding:6px">正在读取列表…</span>';
         const vis = getVisibleLibEntries();
         return (
             (showUnmatchedLiveRow && !navSelectMode && !navLibSearch.trim()
-                ? `<button type="button" class="nav-item ${d?.fromLive && !d?.sourceName ? 'active' : ''}" data-nav-live="${esc(curKind)}" title="当前数据库实际生效配置（尚未保存到预设库）">
+                ? `<button type="button" class="nav-item ${d?.kind === curKind && d?.fromLive && !d?.sourceName ? 'active' : ''}" data-nav-live="${esc(curKind)}" title="当前数据库实际生效配置（尚未保存到预设库）">
                        <span class="lamp-dot is-live"></span>
                        <span class="nav-item-label">当前实际生效</span>
                    </button>`
@@ -1769,6 +1759,11 @@ function renderNavPanel() {
 
     col.innerHTML = `
         ${navModeHeaderHtml('library')}
+        <div class="nav-kind-bar">
+            <select data-nav-kind-pick title="切换预设库文档类型">
+                ${kindOptionsHtml}
+            </select>
+        </div>
         <div class="panel-subbar char-nav-tools">
             <span class="muted" style="font-size:11.5px">${esc(listTitle)} 共 <strong data-lib-count>${countText}</strong> 项</span>
             <div class="row" style="gap:3px">
@@ -1800,21 +1795,27 @@ function renderNavPanel() {
         </div>
     `;
 
+    const navScrollBox = $('.panel-scroll', col);
+    if (navScrollBox && prevNavScroll > 0) navScrollBox.scrollTop = prevNavScroll;
+
     bindNavModeSwitcher(col);
+
+    const kindPickSel = $('[data-nav-kind-pick]', col);
+    if (kindPickSel) {
+        kindPickSel.onchange = () => {
+            navLibKind = kindPickSel.value;
+            navSelectMode = false;
+            navSelectedNames.clear();
+            const scrollEl = $('.panel-scroll', col);
+            if (scrollEl) scrollEl.scrollTop = 0;
+            renderNavPanel();
+        };
+    }
 
     for (const b of $$('[data-nav-filter]', col)) {
         b.onclick = () => {
             if (!tab) return;
             tabView(tab).status = b.dataset.navFilter;
-            persistMeta();
-            renderNavPanel();
-            renderSingleListPanel();
-        };
-    }
-    for (const b of $$('[data-nav-folder]', col)) {
-        b.onclick = () => {
-            if (!tab) return;
-            tabView(tab).folder = b.dataset.navFolder;
             persistMeta();
             renderNavPanel();
             renderSingleListPanel();
@@ -1899,7 +1900,6 @@ function renderNavPanel() {
     for (const b of $$('[data-nav-act]', col)) {
         b.onclick = run(async () => {
             const act = b.dataset.navAct;
-            if (act === 'new-folder') return actions.editFoldersDialog(d);
             if (act === 'import-lib') return actions.importDocumentTab(curKind);
             if (act === 'new-lib') return actions.createNewDocumentTab(curKind);
             if (act === 'toggle-select') {
@@ -2233,7 +2233,7 @@ function renderSingleListPanel() {
             <div class="panel-scroll" style="display:flex">
                 <div class="inspector-empty">
                     ${svg('preset', 34)}
-                    <h3 style="margin:4px 0">酒馆工作台 0.7.1</h3>
+                    <h3 style="margin:4px 0">酒馆工作台 0.7.2</h3>
                     <p>点击顶部 <strong>+</strong> 或左侧「预设库 / 角色卡 / 聊天」开始管理；关闭工作台后台零占用。</p>
                     <div class="row">
                         <button type="button" class="primary" data-doc-act="open">${svg('plus', 14)} 打开预设 / 文档</button>
@@ -3054,20 +3054,22 @@ function renderRightInspector() {
                     notify('对比合并已写入草稿');
                     renderAll();
                 },
-                saveCompareInline(l, r, leftVal, rightVal) {
-                    if (l && !l.marker && typeof leftVal === 'string' && leftVal !== l.content) {
-                        commit(leftDraft, '对比编辑正文', () => {
-                            findEntry(leftDraft, l.id).raw.content = leftVal;
-                        });
-                        persistDraft(state.compare.leftTabId);
+                saveCompareSide(side, l, r, val) {
+                    const isLeft = side === 'left';
+                    const targetDraft = isLeft ? leftDraft : rightDraft;
+                    const targetTabId = isLeft ? state.compare.leftTabId : state.compare.rightTabId;
+                    const targetEntry = isLeft ? l : r;
+                    const sideTag = isLeft ? 'A' : 'B';
+                    if (!targetDraft || !targetEntry || targetEntry.marker) return;
+                    if (typeof val !== 'string' || val === (targetEntry.content ?? '')) {
+                        notify(`${sideTag} 侧正文没有改动`);
+                        return;
                     }
-                    if (r && !r.marker && typeof rightVal === 'string' && rightVal !== r.content) {
-                        commit(rightDraft, '对比编辑正文', () => {
-                            findEntry(rightDraft, r.id).raw.content = rightVal;
-                        });
-                        persistDraft(state.compare.rightTabId);
-                    }
-                    notify('两侧修改已写入草稿');
+                    commit(targetDraft, `对比编辑 ${sideTag} 侧正文`, () => {
+                        findEntry(targetDraft, targetEntry.id).raw.content = val;
+                    });
+                    persistDraft(targetTabId);
+                    notify(`已将 ${sideTag} 侧修改写入草稿`);
                     renderAll();
                 },
             },
@@ -3151,7 +3153,7 @@ function renderFooter() {
             ${d ? `<span>当前：${esc(KIND_LABEL[d.kind])} · ${entries(d).length} 条</span>` : ''}
         </div>
         <div class="footer-right">
-            <span>酒馆工作台 0.7.1 · 🟢当前生效 🟡已改未存</span>
+            <span>酒馆工作台 0.7.2 · 🟢当前生效 🟡已改未存</span>
             <span>Ctrl+S 保存 · Esc 关闭</span>
         </div>
     `;

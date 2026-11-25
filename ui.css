@@ -1015,6 +1015,14 @@ pre.diff {
     display: flex; flex-direction: column; gap: 5px;
     margin-bottom: 6px;
 }
+.nav-kind-bar {
+    padding: 6px 10px 0; flex: none;
+}
+.nav-kind-bar select {
+    width: 100%; padding: 4px 7px; font-size: 12px; font-weight: 500;
+    border: 1px solid var(--line); border-radius: var(--radius-sm);
+    background: var(--input-bg);
+}
 .char-nav-list { gap: 3px; }
 .char-list-item {
     padding: 5px 6px !important; gap: 7px !important;
@@ -1205,7 +1213,10 @@ pre.diff {
 .mobile-nav { display: none; }
 @media (max-width: 960px) {
     .header-brand { display: none !important; }
-    .chat-tag-inputs { grid-template-columns: 1fr; }
+    .header-actions [data-top='undo'],
+    .header-actions [data-top='redo'] { display: none !important; }
+    .chat-tag-inputs,
+    .comparison-editors { grid-template-columns: 1fr; }
     .workspace-grid,
     .workspace-grid.is-compare,
     .workspace-grid.nav-collapsed {
