@@ -2319,7 +2319,7 @@ function renderSingleListPanel() {
                 ${statusBadge}
             </div>
             <div class="panel-head-actions">
-                <button type="button" class="mini-btn primary" data-doc-act="save" title="保存并应用 (Ctrl+S)">${svg('save', 12)} 保存并应用</button>
+                ${iconBtn('save', '保存并应用 (Ctrl+S)', 'data-doc-act="save"', 'sm primary')}
                 ${iconBtn('saveAs', '另存为副本', 'data-doc-act="save-as"', 'sm')}
                 ${iconBtn('rename', '重命名', 'data-doc-act="rename"', 'sm')}
                 ${iconBtn('more', '更多文档操作', 'data-doc-act="doc-more"', 'sm')}
@@ -2433,6 +2433,7 @@ function wireSingleListEvents(col, tab, d, list, hits) {
     };
 
     // 文档头与次栏唯一入口动作
+    const isChar = isCharacterKind(d.kind);
     const docActions = {
         save: () => actions.saveDraft(d, false),
         rename: () => actions.renameDocument(d, tab),

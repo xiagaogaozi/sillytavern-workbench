@@ -792,7 +792,6 @@ export function createChatController(hostApi) {
         const slice = floors.slice(0, st.dirLimit);
         const hasMore = slice.length < floors.length;
 
-        // 保留 618 处等字号缩放
         col.innerHTML = `
             <div class="panel-head">
                 <div class="panel-head-title">
@@ -801,7 +800,7 @@ export function createChatController(hostApi) {
                     ${statusBadge}
                 </div>
                 <div class="panel-head-actions">
-                    <button type="button" class="mini-btn primary" data-chat-mid="save" title="保存并应用修改回聊天记录 (Ctrl+S)">${svg('save', 12)} 保存并应用</button>
+                    ${iconBtn('save', '保存并应用 (Ctrl+S)', 'data-chat-mid="save"', 'sm primary')}
                     ${iconBtn('rename', '重命名聊天文件', 'data-chat-mid="rename"', 'sm')}
                     ${iconBtn('more', '更多聊天操作', 'data-chat-mid="more"', 'sm')}
                 </div>
