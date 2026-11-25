@@ -930,6 +930,40 @@ mark.pww-hit.is-current {
 .ai-compose-bar {
     display: flex; align-items: center; justify-content: space-between; gap: 6px; flex-wrap: wrap;
 }
+.ai-scope-modal { display: flex; flex-direction: column; gap: 8px; }
+.ai-scope-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ai-scope-top input { flex: 1; min-width: 180px; }
+.ai-scope-toolbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 6px; flex-wrap: wrap;
+    padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-alt);
+}
+.ai-scope-list {
+    max-height: 48vh; overflow-y: auto;
+    border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-alt);
+    padding: 4px; display: flex; flex-direction: column; gap: 3px;
+}
+.ai-scope-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 5px 8px; border-radius: var(--radius-sm);
+    border: 1px solid transparent; background: var(--panel-raised);
+}
+.ai-scope-row.is-picked { border-color: var(--accent-border); background: var(--accent-soft); }
+.ai-scope-pick {
+    display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; cursor: pointer;
+}
+.ai-scope-pick input { width: 14px; height: 14px; accent-color: var(--accent); margin: 0; flex: none; }
+.ai-scope-name {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: calc(12.5px * var(--pww-scale));
+}
+.ai-scope-seg { display: inline-flex; gap: 2px; flex: none; }
+.ai-scope-seg button {
+    font-size: calc(11px * var(--pww-scale)); padding: 2px 7px; border-radius: 4px;
+    border: 1px solid var(--line); background: transparent; color: var(--ink-soft);
+}
+.ai-scope-seg button.active.is-mod { background: var(--success-soft); border-color: color-mix(in srgb, var(--success) 55%, transparent); color: var(--success); font-weight: 600; }
+.ai-scope-seg button.active.is-ro { background: var(--accent-soft); border-color: var(--accent-border); color: var(--accent); font-weight: 600; }
+.ai-scope-seg button.active.is-ex { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 55%, transparent); color: var(--danger); font-weight: 600; }
 
 /* 模态框与通知（兼容原 settings/project-ui/management/modal） */
 #dialogs { position: relative; z-index: 100; }

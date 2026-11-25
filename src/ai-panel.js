@@ -16,7 +16,7 @@ export function sessionFor(env) {
         instruction: '',
         reference: '',
         channelId: '',
-        whole: false,
+        whole: true,
         other: false,
         character: false,
         chat: false,
@@ -27,13 +27,36 @@ export function sessionFor(env) {
     });
 }
 
+function resolveScopeStats(d, s) {
+    const all = entries(d).filter((e) => !e.marker);
+    const readonlySet = new Set((d.readonly || []).map(String));
+    const excludedSet = new Set((d.excluded || []).map(String));
+    const chosenSet = new Set((d.selected || []).map(String));
+    const useManualSelection = chosenSet.size > 0 && s?.forceWhole !== true;
+    const modifiableIds = [];
+    for (const e of all) {
+        if (excludedSet.has(e.id) || readonlySet.has(e.id)) continue;
+        if (useManualSelection && !chosenSet.has(e.id)) continue;
+        modifiableIds.push(e.id);
+    }
+    return {
+        total: all.length,
+        modifiableCount: modifiableIds.length,
+        readonlyCount: readonlySet.size,
+        excludedCount: excludedSet.size,
+        useManualSelection,
+        modifiableIds,
+    };
+}
+
 async function context(env, s, discussion = false) {
     const d = env.getDraft();
     const extra =
         s.character || s.chat
             ? await rpc('context.read', { character: s.character, chat: s.chat, limit: s.recent })
             : undefined;
-    if (discussion && !d.selected.length && !s.whole)
+    const stats = resolveScopeStats(d, s);
+    if (discussion && !stats.modifiableCount)
         return {
             selection: [],
             outline: entries(d).map((e) => ({ id: e.id, name: e.name })),
@@ -42,10 +65,10 @@ async function context(env, s, discussion = false) {
             baseFingerprint: fingerprint(d.raw),
         };
     return editingContext(d, {
-        selected: d.selected,
+        selected: stats.useManualSelection ? d.selected : [],
         readonly: d.readonly,
         excluded: d.excluded,
-        whole: s.whole,
+        whole: !stats.useManualSelection,
         other: s.other ? env.otherDraft() : null,
         reference: s.reference,
         extra,
@@ -62,8 +85,14 @@ export function renderAI(env) {
         return;
     }
     const pending = s.proposal?.operations.filter((_, i) => !s.proposal.accepted.includes(i)).length || 0;
+    const stats = resolveScopeStats(d, s);
+    const scopeText = stats.useManualSelection
+        ? `已选 ${stats.modifiableCount} 条`
+        : stats.readonlyCount === 0 && stats.excludedCount === 0
+          ? `全部可修改 (${stats.total} 条)`
+          : `可修改 ${stats.modifiableCount}/${stats.total} 条`;
     const activeFlags = [
-        s.whole ? '全文' : '',
+        stats.useManualSelection ? '仅中栏勾选' : '默认全可修改',
         s.other ? '另一侧' : '',
         s.character ? '角色' : '',
         s.chat ? `聊天${s.recent || 8}条` : '',
@@ -76,7 +105,7 @@ export function renderAI(env) {
             <section class="ai-card ai-context">
                 <div class="ai-ctx-bar">
                     <div class="ai-ctx-summary">
-                        <span class="badge ${d.selected.length ? 'badge-live' : ''}">已选 ${d.selected.length} 条</span>
+                        <span class="badge ${stats.modifiableCount ? 'badge-live' : ''}">${esc(scopeText)}</span>
                         <select name="channelId" class="ai-channel-sel" title="选择 API 渠道">
                             ${[['', '酒馆主 API'], ...(env.config.channels || []).map((c) => [c.id, c.name])]
                                 .map(([v, l]) => `<option value="${esc(v)}" ${String(s.channelId) === String(v) ? 'selected' : ''}>${esc(l)}</option>`)
@@ -86,9 +115,9 @@ export function renderAI(env) {
                     <button type="button" class="mini-btn" data-ai="scope">${svg('filter', 12)} 范围</button>
                 </div>
                 <details class="insp-fold ai-ctx-fold">
-                    <summary>上下文附件${activeFlags.length ? `（${esc(activeFlags.join(' · '))}）` : '（默认仅所选条目）'}</summary>
+                    <summary>上下文附件${activeFlags.length ? `（${esc(activeFlags.join(' · '))}）` : ''}</summary>
                     <div class="check-grid" style="margin-top:6px">
-                        ${field('whole', '整份文档', s.whole, 'checkbox')}
+                        ${field('forceWhole', '忽略中栏勾选（使用全部范围）', Boolean(s.forceWhole), 'checkbox')}
                         ${field('other', '另一侧全文', s.other, 'checkbox')}
                         ${field('character', '当前角色', s.character, 'checkbox')}
                         ${field('chat', '最近聊天', s.chat, 'checkbox')}
@@ -229,40 +258,174 @@ async function action(env, name) {
         return;
     }
     if (name === 'scope') {
+        const allItems = entries(d).filter((e) => !e.marker);
+        const readonlySet = new Set((d.readonly || []).map(String));
+        const excludedSet = new Set((d.excluded || []).map(String));
+        const chosenSet = new Set((d.selected || []).map(String));
+        const useManual = chosenSet.size > 0 && s.forceWhole !== true;
+        const modes = new Map(
+            allItems.map((e) => [
+                e.id,
+                excludedSet.has(e.id)
+                    ? 'exclude'
+                    : readonlySet.has(e.id)
+                      ? 'readonly'
+                      : useManual && !chosenSet.has(e.id)
+                        ? 'exclude'
+                        : 'modify',
+            ]),
+        );
+        const picked = new Set();
+        let filterQuery = '';
+
+        const getVisible = () => {
+            const q = filterQuery.trim().toLowerCase();
+            return q ? allItems.filter((e) => (e.name + '\n' + e.id).toLowerCase().includes(q)) : allItems;
+        };
+
         await modal(
             '选择 AI 参与范围',
-            '<p class="muted">可修改项会加入选择；只读项只作参考；排除项不发送正文。</p>' +
-                entries(d)
-                    .map((e) =>
-                        field(
-                            'scope:' + e.id,
-                            e.name,
-                            d.excluded?.includes(e.id)
-                                ? 'exclude'
-                                : d.readonly?.includes(e.id)
-                                  ? 'readonly'
-                                  : d.selected.includes(e.id)
-                                    ? 'modify'
-                                    : 'exclude',
-                            'select',
-                            {
-                                choices: [
-                                    ['modify', '可修改'],
-                                    ['readonly', '只读参考'],
-                                    ['exclude', '排除'],
-                                ],
-                            },
-                        ),
-                    )
-                    .join(''),
+            `<div class="ai-scope-modal">
+                <div class="ai-scope-top">
+                    <input type="search" data-scope-search placeholder="搜索条目筛选后再全选/批量切换…">
+                    <span class="muted" data-scope-stats></span>
+                </div>
+                <div class="ai-scope-toolbar">
+                    <div class="row" style="gap:4px">
+                        <button type="button" class="mini-btn" data-scope-bulk="select-all">全选当前</button>
+                        <button type="button" class="mini-btn" data-scope-bulk="clear-pick">取消勾选</button>
+                        <button type="button" class="mini-btn" data-scope-bulk="invert">反选</button>
+                    </div>
+                    <div class="row" style="gap:4px">
+                        <button type="button" class="mini-btn primary" data-scope-set="modify">设可修改</button>
+                        <button type="button" class="mini-btn" data-scope-set="readonly">设只读</button>
+                        <button type="button" class="mini-btn danger" data-scope-set="exclude">设排除</button>
+                        <button type="button" class="mini-btn" data-scope-bulk="reset-all" title="所有条目全部设为可修改">全部可修改</button>
+                    </div>
+                </div>
+                <div class="ai-scope-list" data-scope-list></div>
+            </div>`,
             {
-                onSubmit: (v) => {
+                wide: true,
+                submit: '保存范围',
+                onMount: (dialog) => {
+                    const statsEl = $('[data-scope-stats]', dialog);
+                    const listEl = $('[data-scope-list]', dialog);
+                    const selAllBtn = $('[data-scope-bulk="select-all"]', dialog);
+
+                    const draw = () => {
+                        const vis = getVisible();
+                        let mod = 0, ro = 0, ex = 0;
+                        for (const m of modes.values()) {
+                            if (m === 'modify') mod++;
+                            else if (m === 'readonly') ro++;
+                            else ex++;
+                        }
+                        statsEl.textContent = `已勾 ${picked.size} 条 · 可修改 ${mod} · 只读 ${ro} · 排除 ${ex}`;
+                        const allVisPicked = vis.length > 0 && vis.every((e) => picked.has(e.id));
+                        selAllBtn.textContent = allVisPicked ? '取消全选' : `全选当前 (${vis.length})`;
+
+                        listEl.innerHTML =
+                            vis
+                                .map((e) => {
+                                    const m = modes.get(e.id) || 'modify';
+                                    const isPicked = picked.has(e.id);
+                                    return `
+                                        <div class="ai-scope-row ${isPicked ? 'is-picked' : ''}" data-scope-row="${esc(e.id)}">
+                                            <label class="ai-scope-pick">
+                                                <input type="checkbox" data-scope-chk="${esc(e.id)}" ${isPicked ? 'checked' : ''}>
+                                                <span class="ai-scope-name" title="${esc(e.name)}">${esc(e.name)}</span>
+                                                ${e.enabled === false ? '<span class="badge">已关</span>' : ''}
+                                            </label>
+                                            <div class="ai-scope-seg" role="group">
+                                                <button type="button" class="${m === 'modify' ? 'active is-mod' : ''}" data-scope-mode="modify" data-id="${esc(e.id)}">可修改</button>
+                                                <button type="button" class="${m === 'readonly' ? 'active is-ro' : ''}" data-scope-mode="readonly" data-id="${esc(e.id)}">只读</button>
+                                                <button type="button" class="${m === 'exclude' ? 'active is-ex' : ''}" data-scope-mode="exclude" data-id="${esc(e.id)}">排除</button>
+                                            </div>
+                                        </div>`;
+                                })
+                                .join('') || '<p class="muted" style="padding:14px;text-align:center">没有匹配的条目</p>';
+
+                        for (const chk of $$('[data-scope-chk]', listEl)) {
+                            chk.onchange = () => {
+                                const id = chk.dataset.scopeChk;
+                                if (chk.checked) picked.add(id);
+                                else picked.delete(id);
+                                chk.closest('.ai-scope-row')?.classList.toggle('is-picked', chk.checked);
+                                drawStatsOnly();
+                            };
+                        }
+                        for (const btn of $$('[data-scope-mode]', listEl)) {
+                            btn.onclick = () => {
+                                modes.set(btn.dataset.id, btn.dataset.scopeMode);
+                                draw();
+                            };
+                        }
+                    };
+
+                    const drawStatsOnly = () => {
+                        const vis = getVisible();
+                        let mod = 0, ro = 0, ex = 0;
+                        for (const m of modes.values()) {
+                            if (m === 'modify') mod++;
+                            else if (m === 'readonly') ro++;
+                            else ex++;
+                        }
+                        statsEl.textContent = `已勾 ${picked.size} 条 · 可修改 ${mod} · 只读 ${ro} · 排除 ${ex}`;
+                        const allVisPicked = vis.length > 0 && vis.every((e) => picked.has(e.id));
+                        selAllBtn.textContent = allVisPicked ? '取消全选' : `全选当前 (${vis.length})`;
+                    };
+
+                    const sInp = $('[data-scope-search]', dialog);
+                    sInp.addEventListener('input', () => {
+                        filterQuery = sInp.value;
+                        draw();
+                    });
+
+                    for (const btn of $$('[data-scope-bulk]', dialog)) {
+                        btn.onclick = () => {
+                            const act = btn.dataset.scopeBulk;
+                            const vis = getVisible();
+                            if (act === 'select-all') {
+                                const allSel = vis.length > 0 && vis.every((e) => picked.has(e.id));
+                                for (const e of vis) {
+                                    if (allSel) picked.delete(e.id);
+                                    else picked.add(e.id);
+                                }
+                            } else if (act === 'clear-pick') {
+                                picked.clear();
+                            } else if (act === 'invert') {
+                                for (const e of vis) {
+                                    if (picked.has(e.id)) picked.delete(e.id);
+                                    else picked.add(e.id);
+                                }
+                            } else if (act === 'reset-all') {
+                                for (const e of allItems) modes.set(e.id, 'modify');
+                            }
+                            draw();
+                        };
+                    }
+
+                    for (const btn of $$('[data-scope-set]', dialog)) {
+                        btn.onclick = () => {
+                            const targetMode = btn.dataset.scopeSet;
+                            const targets = picked.size ? [...picked] : getVisible().map((e) => e.id);
+                            for (const id of targets) modes.set(id, targetMode);
+                            draw();
+                        };
+                    }
+
+                    draw();
+                },
+                onSubmit: () => {
                     d.selected = [];
                     d.readonly = [];
                     d.excluded = [];
-                    for (const [k, mode] of Object.entries(v)) {
-                        const id = k.slice(6);
-                        (mode === 'modify' ? d.selected : mode === 'readonly' ? d.readonly : d.excluded).push(id);
+                    s.whole = true;
+                    s.forceWhole = false;
+                    for (const [id, mode] of modes.entries()) {
+                        if (mode === 'readonly') d.readonly.push(id);
+                        else if (mode === 'exclude') d.excluded.push(id);
                     }
                     env.changed();
                 },

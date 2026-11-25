@@ -361,14 +361,17 @@ function requestBody(channel, messages, options = {}) {
         o = c.chatCompletionSettings;
     if (!channel && (c.mainApi !== 'openai' || !o)) throw Error('主API需为聊天补全连接；也可配置独立渠道');
     const source = channel?.source || o.chat_completion_source;
+    // 仅从主 API 读取连接/鉴权信息，不继承酒馆当前选择预设的提示词后处理、自定义请求体或采样参数
     const body = {
         chat_completion_source: source,
         model: channel?.model || c.getChatCompletionModel(),
         messages,
         stream: options.stream ?? true,
-        temperature: Number(options.temperature ?? channel?.temperature ?? o?.temp_openai ?? 0.4),
-        max_tokens: Number(options.maxTokens ?? channel?.maxTokens ?? o?.openai_max_tokens ?? 4096),
-        custom_prompt_post_processing: channel?.postProcessing ?? o?.custom_prompt_post_processing,
+        temperature: Number(options.temperature ?? channel?.temperature ?? 0.4),
+        max_tokens: Number(options.maxTokens ?? channel?.maxTokens ?? 6000),
+        claude_use_sysprompt: true,
+        use_makersuite_sysprompt: true,
+        ...(channel?.postProcessing ? { custom_prompt_post_processing: channel.postProcessing } : {}),
     };
     if (channel) {
         if (source === 'custom') {
@@ -392,12 +395,7 @@ function requestBody(channel, messages, options = {}) {
         }
     } else {
         if (source === 'custom')
-            for (const k of [
-                'custom_url',
-                'custom_include_body',
-                'custom_exclude_body',
-                'custom_include_headers',
-            ])
+            for (const k of ['custom_url', 'custom_include_headers'])
                 if (o[k]) body[k] = o[k];
         if (
             o.reverse_proxy &&
@@ -407,8 +405,6 @@ function requestBody(channel, messages, options = {}) {
             body.proxy_password = o.proxy_password;
         }
         for (const k of [
-            'claude_use_sysprompt',
-            'use_makersuite_sysprompt',
             'vertexai_auth_mode',
             'vertexai_region',
             'vertexai_express_project_id',
