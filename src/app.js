@@ -620,11 +620,12 @@ const actions = createActions({
         if (avatar) avatarVersions.set(avatar, ver || Date.now());
     },
     findTab: (kind, name) => state.tabs.find((t) => t.kind === kind && t.sourceName === name),
+    findLiveTab: (kind) => state.tabs.find((t) => t.liveKey === 'live:' + kind),
     listTabNames: (kind) => state.tabs.filter((t) => t.kind === kind).map((t) => t.name),
     activateTab,
     addTab,
     closeTab,
-    afterSave(d, { name, sourceName, asNew }) {
+    afterSave(d, { name, sourceName, asNew, refreshWorlds }) {
         if (!asNew) {
             const t = state.tabs.find((x) => draftFor(x.id) === d);
             if (t) {
@@ -646,7 +647,7 @@ const actions = createActions({
                 })
                 .catch(() => {});
         } else {
-            rpc('documents.list', { refresh: d.kind === 'worldbook' && Boolean(asNew) })
+            rpc('documents.list', { refresh: d.kind === 'worldbook' && Boolean(asNew || refreshWorlds) })
                 .then((l) => {
                     runtime.lists = l;
                     renderNavPanel();
@@ -722,6 +723,13 @@ async function addTab(draft, opts = {}) {
             return;
         }
     }
+    if (!opts.allowDuplicate && draft.sourceName) {
+        const sameTab = state.tabs.find((t) => t.kind === draft.kind && t.sourceName === draft.sourceName);
+        if (sameTab) {
+            await activateTab(sameTab.id);
+            return;
+        }
+    }
     const id = uuid();
     const list = entries(draft);
     const tab = {
@@ -777,6 +785,10 @@ async function activateTab(id) {
     if (isDatabaseKind(tab.kind)) prefetchDbCatalog(tab.kind);
     persistMeta();
     renderAll();
+    requestAnimationFrame(() => {
+        const el = document.querySelector(`#pww-tabs .doc-tab[data-tab-id="${CSS.escape(id)}"]`);
+        el?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    });
 }
 
 async function closeTab(id, force = false) {
@@ -1767,7 +1779,7 @@ function renderNavPanel() {
         <div class="panel-subbar char-nav-tools">
             <span class="muted" style="font-size:11.5px">${esc(listTitle)} 共 <strong data-lib-count>${countText}</strong> 项</span>
             <div class="row" style="gap:3px">
-                ${iconBtn('import', `导入${listTitle}文件到新标签`, 'data-nav-act="import-lib"', 'sm')}
+                ${iconBtn('import', `导入${listTitle}并保存到列表`, 'data-nav-act="import-lib"', 'sm')}
                 ${iconBtn('plus', `新建空白/默认${listTitle}`, 'data-nav-act="new-lib"', 'sm')}
                 ${iconBtn('refresh', '刷新列表', 'data-nav-act="refresh-lib"', 'sm')}
             </div>
@@ -2303,7 +2315,7 @@ function renderSingleListPanel() {
                 ${isDb ? iconBtn('play', '应用到数据库 / 当前聊天', 'data-doc-act="apply"', 'sm') : ''}
                 ${iconBtn('rename', '重命名', 'data-doc-act="rename"', 'sm')}
                 ${iconBtn('saveAs', '另存为副本', 'data-doc-act="save-as"', 'sm')}
-                ${iconBtn('import', isChar ? '导入新角色卡 (PNG / JSON / YAML)' : '导入文件到新标签（不覆盖原草稿与同名预设）', 'data-doc-act="import"', 'sm')}
+                ${iconBtn('import', isChar ? '导入新角色卡 (PNG / JSON / YAML)' : '导入文件并保存到列表（不切换当前生效预设）', 'data-doc-act="import"', 'sm')}
                 ${isChar ? iconBtn('upload', '更新角色卡（覆盖当前卡并保留聊天记录）', `data-doc-act="update-card" ${d.avatar ? '' : 'disabled'}`, 'sm') : ''}
                 ${iconBtn('export', isChar ? '导出角色卡 (PNG / JSON)' : '导出文件', 'data-doc-act="export"', 'sm')}
                 ${iconBtn('stats', 'Token 与字数统计', 'data-doc-act="stats"', 'sm')}

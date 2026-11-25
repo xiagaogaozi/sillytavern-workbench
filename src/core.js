@@ -1188,3 +1188,23 @@ export function makeToolCode(form) {
         ' };'
     );
 }
+/** 规范化导入文件解析后的原始对象，兼容正文替换裸数组与表格模板套壳并校验文档结构。 */
+export function normalizeImportedDocument(kind, parsed, fileName = '') {
+    let raw = parsed;
+    const baseName = String(fileName || '').replace(/\.(json|ya?ml)$/i, '');
+    if (kind === 'contentReplace' && Array.isArray(raw)) {
+        if (!raw.length) throw Error('文件为空');
+        if (raw[0] && typeof raw[0] === 'object' && typeof raw[0].content === 'string' && !Array.isArray(raw[0].promptGroup)) {
+            raw = { name: baseName || '导入正文替换预设', promptGroup: raw };
+        } else {
+            raw = raw[0];
+        }
+    } else if (Array.isArray(raw)) {
+        if (!raw.length) throw Error('文件为空');
+        raw = raw[0];
+    }
+    if (kind === 'tableTemplate') raw = database.decodeTemplateDocument(raw?.template ?? raw);
+    assertDocument(kind, raw);
+    const name = String(raw?.name || baseName || '导入文档').trim() || '导入文档';
+    return { raw, name };
+}

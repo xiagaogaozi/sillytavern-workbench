@@ -17,6 +17,7 @@ import {
     transformEntries,
     auditWorld,
     fingerprint,
+    normalizeImportedDocument,
     uuid,
 } from './core.js';
 import {
@@ -25,7 +26,6 @@ import {
     isDatabaseKind,
     isPromptKind,
     audit as auditDb,
-    decodeTemplateDocument,
     assertSafePatch,
 } from './database-model.js';
 import * as prompts from './prompt-model.js';
@@ -276,39 +276,51 @@ export function createActions(ctxApi) {
         return openExistingTab(kind, chosen.name);
     }
 
+    const openingTabs = new Map();
+
     async function openExistingTab(kind, name) {
         // 如果已打开同一文档，直接激活该标签页
         const existing = ctxApi.findTab(kind, name);
         if (existing) {
             await ctxApi.activateTab(existing.id);
-            notify('已切换到已打开标签：「' + name + '」');
+            notify('已切换到已打开标签：「' + (existing.name || name) + '」');
             return;
         }
-        if (kind === 'preset' || kind === 'worldbook') {
-            const raw = await rpc('documents.read', { kind, name });
-            const d = createDraft(kind, raw, name, true, { takeOwnership: true });
+        const lockKey = `${kind}\0${name}`;
+        if (openingTabs.has(lockKey)) return openingTabs.get(lockKey);
+        const task = (async () => {
+            if (kind === 'preset' || kind === 'worldbook') {
+                const raw = await rpc('documents.read', { kind, name });
+                const d = createDraft(kind, raw, name, true, { takeOwnership: true });
+                await ctxApi.addTab(d);
+                notify('已打开「' + name + '」');
+                return;
+            }
+            if (kind === 'character') {
+                const res = await charCall('read', { avatar: name });
+                const d = createDraft('character', res.raw, res.name, true, { takeOwnership: true });
+                d.avatar = res.avatar;
+                d.sourceName = res.avatar;
+                d.charTags = res.tags || [];
+                d.charAuxWorlds = res.auxiliary || [];
+                d.avatarVersion = Date.now();
+                await ctxApi.addTab(d);
+                notify('已打开角色卡「' + res.name + '」');
+                return;
+            }
+            const res = await dbCall('read', { kind, name });
+            const d = createDraft(kind, res.raw, res.name, true, { takeOwnership: true });
+            d.nativeRevision = res.revision;
+            d.nativeScope = res.scope;
             await ctxApi.addTab(d);
-            notify('已打开「' + name + '」');
-            return;
+            notify('已打开数据库文档「' + res.name + '」');
+        })();
+        openingTabs.set(lockKey, task);
+        try {
+            return await task;
+        } finally {
+            openingTabs.delete(lockKey);
         }
-        if (kind === 'character') {
-            const res = await charCall('read', { avatar: name });
-            const d = createDraft('character', res.raw, res.name, true, { takeOwnership: true });
-            d.avatar = res.avatar;
-            d.sourceName = res.avatar;
-            d.charTags = res.tags || [];
-            d.charAuxWorlds = res.auxiliary || [];
-            d.avatarVersion = Date.now();
-            await ctxApi.addTab(d);
-            notify('已打开角色卡「' + res.name + '」');
-            return;
-        }
-        const res = await dbCall('read', { kind, name });
-        const d = createDraft(kind, res.raw, res.name, true, { takeOwnership: true });
-        d.nativeRevision = res.revision;
-        d.nativeScope = res.scope;
-        await ctxApi.addTab(d);
-        notify('已打开数据库文档「' + res.name + '」');
     }
 
     async function createNewDocumentTab(kind) {
@@ -340,26 +352,61 @@ export function createActions(ctxApi) {
     }
 
     async function loadCurrentPromptTab(kind) {
-        const res = await dbCall('current', { kind });
-        const matched = res.matchedActive && res.activeName ? res.activeName : null;
-        const label = matched || KIND_LABEL[kind];
-        const d = createDraft(kind, res.raw, label, Boolean(matched), { fromLive: true });
-        d.nativeScope = res.scope;
-        await ctxApi.addTab(d, { liveKey: 'live:' + kind });
-        notify('已读取：' + (matched || res.scopeLabel || KIND_LABEL[kind]));
+        const existing = ctxApi.findLiveTab?.(kind);
+        if (existing) {
+            await ctxApi.activateTab(existing.id);
+            notify('已切换到已打开标签：「' + existing.name + '」');
+            return;
+        }
+        const lockKey = 'live:' + kind;
+        if (openingTabs.has(lockKey)) return openingTabs.get(lockKey);
+        const task = (async () => {
+            const res = await dbCall('current', { kind });
+            const matched = res.matchedActive && res.activeName ? res.activeName : null;
+            const label = matched || KIND_LABEL[kind];
+            const d = createDraft(kind, res.raw, label, Boolean(matched), { fromLive: true });
+            d.nativeScope = res.scope;
+            await ctxApi.addTab(d, { liveKey: lockKey });
+            notify('已读取：' + (matched || res.scopeLabel || KIND_LABEL[kind]));
+        })();
+        openingTabs.set(lockKey, task);
+        try {
+            return await task;
+        } finally {
+            openingTabs.delete(lockKey);
+        }
     }
 
     async function parseImportedFile(kind, file) {
         const text = await file.text();
         let raw = await parseDocumentText(text);
         if (isPromptKind(kind)) raw = await dbCall('importPrompt', { kind, raw });
-        if (Array.isArray(raw)) {
-            if (!raw.length) throw Error('文件为空');
-            raw = raw[0];
+        const res = normalizeImportedDocument(kind, raw, file.name);
+        if (isDatabaseKind(kind)) {
+            const issues = auditDb({ kind, raw: res.raw });
+            if (issues.length) throw Error(issues.join('；'));
         }
-        if (kind === 'tableTemplate') raw = decodeTemplateDocument(raw.template ?? raw);
-        const name = raw.name || file.name.replace(/\.(json|ya?ml)$/i, '');
-        return { raw, name };
+        return res;
+    }
+
+    async function persistDocumentToLibrary(kind, raw, targetName, { create = false, base = null } = {}) {
+        if (!isDatabaseKind(kind)) {
+            return rpc('documents.save', {
+                kind,
+                name: targetName,
+                raw: clone(raw),
+                base: create ? null : clone(base),
+                create,
+            });
+        }
+        const issues = auditDb({ kind, raw });
+        if (issues.length) throw Error(issues.join('；'));
+        return dbCall('save', {
+            kind,
+            name: targetName,
+            raw: clone(raw),
+            create,
+        });
     }
 
     async function uniqueImportName(kind, baseName) {
@@ -436,10 +483,34 @@ export function createActions(ctxApi) {
         const file = await pickFile(kind === 'worldbook' ? '.json,.yaml,.yml' : '.json');
         if (!file) return;
         const { raw, name } = await parseImportedFile(kind, file);
-        const safeName = await uniqueImportName(kind, name);
-        const d = createDraft(kind, raw, safeName, false, { takeOwnership: true });
+        const suggestedName = await uniqueImportName(kind, name);
+        const kindLabel = KIND_LABEL[kind] || '预设库';
+        const v = await modal(
+            `导入并保存${kindLabel}`,
+            field('name', '保存名称', suggestedName, 'text', { required: true }) +
+                `<p class="muted">确认后将直接保存到左侧「${esc(kindLabel)}」列表并打开新标签页，<strong>不会切换酒馆或数据库当前生效的预设</strong>。</p>`,
+            { submit: '导入并保存' },
+        );
+        if (!v) return;
+        const targetName = v.name.trim();
+        if (!targetName) throw Error('名称不能为空');
+        // create: true 确保不覆盖已有预设，也不改变当前激活预设
+        const res = await persistDocumentToLibrary(kind, raw, targetName, { create: true });
+        const d = createDraft(kind, res.raw, res.name, true, { takeOwnership: true });
+        if (isDatabaseKind(kind)) {
+            d.nativeRevision = res.revision;
+            d.nativeScope = res.scope;
+            ctxApi.addReceipt(res, '导入 · ' + res.name);
+            if (res.needsReload) ctxApi.markNeedsReload();
+        }
         await ctxApi.addTab(d);
-        notify('已导入到新标签（不覆盖原草稿与同名预设）：「' + safeName + '」');
+        ctxApi.afterSave(d, {
+            name: res.name,
+            sourceName: res.name,
+            asNew: false,
+            refreshWorlds: kind === 'worldbook',
+        });
+        notify(`已导入并保存到「${kindLabel}」：「${res.name}」`);
     }
 
     async function importIntoDraft(d) {
@@ -635,26 +706,13 @@ export function createActions(ctxApi) {
             targetName = v.name.trim();
         }
         if (!isDatabaseKind(d.kind)) {
-            const res = await rpc('documents.save', {
-                kind: d.kind,
-                name: targetName,
-                raw: clone(d.raw),
-                base: create ? null : clone(d.base),
-                create,
-            });
+            const res = await persistDocumentToLibrary(d.kind, d.raw, targetName, { create, base: d.base });
             if (!asNew) markSaved(d, res.name, res.raw);
-            ctxApi.afterSave(d, { name: res.name, asNew });
+            ctxApi.afterSave(d, { name: res.name, asNew, refreshWorlds: d.kind === 'worldbook' && create });
             notify((asNew ? '已另存副本：「' : '已保存：「') + res.name + '」');
             return;
         }
-        const issues = auditDb(d);
-        if (issues.length) throw Error(issues.join('；'));
-        const res = await dbCall('save', {
-            kind: d.kind,
-            name: targetName,
-            raw: clone(d.raw),
-            create,
-        });
+        const res = await persistDocumentToLibrary(d.kind, d.raw, targetName, { create });
         if (!asNew) {
             markSaved(d, res.name, res.raw);
             d.nativeRevision = res.revision;

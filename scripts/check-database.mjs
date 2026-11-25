@@ -27,3 +27,6 @@ for(const kind of Object.keys(db.DATABASE_KINDS))assert.ok(defaultTemplates()[ki
 console.log('PASS: database native roundtrip, dependency remap, prompt identities/slots, batch undo, AI scope and safe fields.');
 
 const sameLeft=c.createDraft('plot',raw,'same',true),sameRight=c.createDraft('plot',raw,'same',true);c.commit(sameRight,'copy',()=>c.transfer(sameLeft,sameRight,['a'],'b'));const pairs=c.pairEntries(sameRight,sameLeft);assert.equal(pairs.filter(p=>p.left?.id==='b' && p.right?.id==='b').length,1);assert.equal(pairs.filter(p=>!p.right).length,1);console.log('PASS: duplicated identical prompt bodies do not steal later stable-ID matches.');
+const bareReplace=c.normalizeImportedDocument('contentReplace',[{role:'USER',content:'Clean text'}],'my-replace.json');assert.equal(bareReplace.name,'my-replace');assert.equal(bareReplace.raw.promptGroup.length,1);
+const wrappedTpl=c.normalizeImportedDocument('tableTemplate',{template:JSON.stringify(table.raw)},'tpl.json');assert.equal(wrappedTpl.name,'tpl');assert.ok(wrappedTpl.raw.mate);
+console.log('PASS: normalized bare contentReplace arrays and wrapped tableTemplate imports.');
