@@ -1,4 +1,4 @@
-// 业务操作集中层：文档读写/另存、数据库直连应用与未启用功能开关、整理工具、查找替换与全本比对。
+// 业务操作集中层：文档读写/另存、数据库直连应用与未启用功能开关、运行配置、查找替换与全本比对。
 import {
     clone,
     commit,
@@ -15,7 +15,6 @@ import {
     removeEntries,
     transfer,
     transformEntries,
-    auditWorld,
     fingerprint,
     normalizeImportedDocument,
     uuid,
@@ -675,7 +674,7 @@ export function createActions(ctxApi) {
                     copyDraft.avatarVersion = Date.now();
                     await ctxApi.addTab(copyDraft);
                 }
-                notify((asNew ? '已另存角色卡副本：「' : '已保存新角色卡：「') + res.name + '」');
+                notify((asNew ? '已另存角色卡副本：「' : '已保存并应用新角色卡：「') + res.name + '」');
                 return;
             }
             const res = await charCall('save', {
@@ -691,7 +690,7 @@ export function createActions(ctxApi) {
             const freshList = await charCall('list', { refresh: false });
             ctxApi.setCharacterCatalog?.(freshList);
             ctxApi.afterSave(d, { name: res.name, sourceName: res.avatar, asNew: false });
-            notify('已保存角色卡：「' + res.name + '」');
+            notify('已保存并应用角色卡：「' + res.name + '」');
             return;
         }
         let targetName = d.sourceName;
@@ -700,7 +699,7 @@ export function createActions(ctxApi) {
             const v = await modal(
                 asNew ? '另存为新文档' : '首次保存文档',
                 field('name', '新名称', d.name + (asNew ? ' - 副本' : ''), 'text', { required: true }),
-                { submit: '保存' },
+                { submit: asNew ? '另存为副本' : '保存并应用' },
             );
             if (!v) return;
             targetName = v.name.trim();
@@ -709,7 +708,7 @@ export function createActions(ctxApi) {
             const res = await persistDocumentToLibrary(d.kind, d.raw, targetName, { create, base: d.base });
             if (!asNew) markSaved(d, res.name, res.raw);
             ctxApi.afterSave(d, { name: res.name, asNew, refreshWorlds: d.kind === 'worldbook' && create });
-            notify((asNew ? '已另存副本：「' : '已保存：「') + res.name + '」');
+            notify((asNew ? '已另存副本：「' : '已保存并应用：「') + res.name + '」');
             return;
         }
         const res = await persistDocumentToLibrary(d.kind, d.raw, targetName, { create });
@@ -721,17 +720,22 @@ export function createActions(ctxApi) {
         ctxApi.addReceipt(res, (asNew ? '另存为 · ' : '保存 · ') + res.name);
         if (res.needsReload) ctxApi.markNeedsReload();
         ctxApi.afterSave(d, { name: res.name, asNew });
-        notify(
-            (asNew ? '已另存副本：「' : '已保存到数据库预设库：「') +
-                res.name +
-                '」' +
-                (res.needsReload ? '（顶部可一键刷新酒馆同步内存）' : ''),
-        );
+        if (asNew) {
+            notify(
+                '已另存副本：「' +
+                    res.name +
+                    '」' +
+                    (res.needsReload ? '（顶部可一键刷新酒馆同步内存）' : ''),
+            );
+            return;
+        }
+        notify('已保存到预设库，请确认应用范围或差异预览…');
+        await applyDatabaseDraft(d, { skipSaveCheck: true });
     }
 
-    async function applyDatabaseDraft(d) {
+    async function applyDatabaseDraft(d, { skipSaveCheck = false } = {}) {
         if (!d || !isDatabaseKind(d.kind)) return;
-        if (!d.sourceName || dirty(d)) {
+        if (!skipSaveCheck && (!d.sourceName || dirty(d))) {
             const autoSave = await modal(
                 '应用前需先保存',
                 '<p>当前草稿有未保存修改，是否先保存到预设库再继续应用？</p>',
@@ -739,6 +743,7 @@ export function createActions(ctxApi) {
             );
             if (!autoSave) return;
             await saveDraft(d, false);
+            return;
         }
         const caps = ctxApi.dbCaps() || (await dbCall('capabilities'));
         const scopes = caps.scopes?.[d.kind] || ['global'];
@@ -985,95 +990,28 @@ export function createActions(ctxApi) {
     }
 
     async function openToolsDialog(d) {
-        if (!d) throw Error('先打开文档');
-        if (isDatabaseKind(d.kind)) {
-            if (isPromptKind(d.kind)) {
-                const v = await modal(
-                    '恢复内置默认提示词',
-                    field('group', '恢复范围', '', 'select', {
-                        choices: [['', '整套提示词'], ...Object.keys(d.raw.groups).map((k) => [k, prompts.groupLabel(k)])],
-                    }),
-                    { submit: '恢复到草稿' },
-                );
-                if (!v) return;
-                const def = await dbCall('defaults', { kind: d.kind });
-                commit(d, '恢复内置默认', () => {
-                    if (v.group) d.raw.groups[v.group] = clone(def.groups[v.group]);
-                    else d.raw.groups = clone(def.groups);
-                    d.unitIds = {};
-                    prompts.ensureIds(d);
-                });
-                ctxApi.markMutated(d);
-                notify('已恢复默认到草稿');
-                return;
-            }
-            return openDbRunConfig(d);
-        }
-        const modes = [
-            ['format', '格式清理（去除 **，单 * 转空格）'],
-            ['cliche', '清理常见 AI 八股词'],
-            ...(d.kind === 'worldbook'
-                ? [
-                      ['keywords', '拆分修复中英文逗号关键词'],
-                      ['depth', '深度合并（深度 1-10 归 0 重排）'],
-                      ['reorder', '按当前顺序重排 order'],
-                      ['audit', '世界书体检审计'],
-                  ]
-                : []),
-        ];
-        const chosen = await modal(
-            '整理工具 · ' + d.name,
-            field('mode', '工具操作', modes[0][0], 'select', { choices: modes }) +
-                `<p class="muted">作用范围：${d.selected.length ? `已选 ${d.selected.length} 条` : '全部条目'}</p>`,
-            { submit: '执行' },
-        );
-        if (!chosen) return;
-        if (chosen.mode === 'audit') {
-            const issues = auditWorld(d.raw);
-            await modal(
-                '世界书体检结果',
-                issues.length
-                    ? `<ul>${issues.map((x) => `<li>[${esc(x.severity || 'info')}] ${esc(x.text || x)}</li>`).join('')}</ul>`
-                    : '<p>未发现明显结构问题。</p>',
-                { submit: null },
+        if (!d || !isDatabaseKind(d.kind)) return;
+        if (isPromptKind(d.kind)) {
+            const v = await modal(
+                '恢复内置默认提示词',
+                field('group', '恢复范围', '', 'select', {
+                    choices: [['', '整套提示词'], ...Object.keys(d.raw.groups).map((k) => [k, prompts.groupLabel(k)])],
+                }),
+                { submit: '恢复到草稿' },
             );
+            if (!v) return;
+            const def = await dbCall('defaults', { kind: d.kind });
+            commit(d, '恢复内置默认', () => {
+                if (v.group) d.raw.groups[v.group] = clone(def.groups[v.group]);
+                else d.raw.groups = clone(def.groups);
+                d.unitIds = {};
+                prompts.ensureIds(d);
+            });
+            ctxApi.markMutated(d);
+            notify('已恢复默认到草稿');
             return;
         }
-        let extra = {};
-        if (chosen.mode === 'cliche') {
-            const cw = await modal(
-                '输入要清理的词条',
-                field('words', '词条列表（逗号或换行分隔）', '不禁, 微微一愣, 嘴角勾起一抹', 'textarea', { rows: 3 }),
-                { submit: '预览清理' },
-            );
-            if (!cw) return;
-            extra = cw;
-        }
-        const ids = d.selected.length ? d.selected : entries(d).map((e) => e.id);
-        const temp = { ...d, raw: clone(d.raw) };
-        transformEntries(temp, chosen.mode, { ...extra, ids });
-        const diff = renderInlineDiffHtml(
-            entries(d)
-                .map((e) => `${e.name}\n${e.content}`)
-                .join('\n\n'),
-            entries(temp)
-                .map((e) => `${e.name}\n${e.content}`)
-                .join('\n\n'),
-        );
-        if (!diff.changedCount && JSON.stringify(d.raw) === JSON.stringify(temp.raw)) {
-            notify('没有可整理的变化');
-            return;
-        }
-        const ok = await modal('确认整理变化', `<div class="pww-diff-box">${diff.html}</div>`, {
-            wide: true,
-            submit: '应用到草稿',
-        });
-        if (!ok) return;
-        commit(d, '整理 · ' + chosen.mode, () => {
-            d.raw = clone(temp.raw);
-        });
-        ctxApi.markMutated(d);
-        notify('整理已应用到草稿');
+        return openDbRunConfig(d);
     }
 
     async function compareAllDialog(left, right) {

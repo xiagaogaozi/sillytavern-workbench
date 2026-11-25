@@ -118,6 +118,9 @@ const chatCtrl = createChatController({
     onHistoryChange() {
         renderHeaderTabs();
     },
+    showMenu(anchor, items) {
+        showPopMenu(anchor, items);
+    },
 });
 
 async function openChatsForCharacter(avatar, charName) {
@@ -372,6 +375,7 @@ function showPopMenu(anchor, items) {
         const btn = document.createElement('button');
         btn.type = 'button';
         if (item.danger) btn.className = 'danger';
+        if (item.disabled) btn.disabled = true;
         btn.innerHTML =
             (item.icon ? svg(item.icon, 14) : '') +
             `<span class="pop-menu-label">${esc(item.label)}</span>` +
@@ -545,14 +549,18 @@ document.addEventListener('pointerdown', (e) => {
 
 function applyTheme(host) {
     runtime.theme = host || {};
-    for (const [k, v] of Object.entries(runtime.theme)) if (v) document.documentElement.style.setProperty(k, v);
     const t = config.theme || {};
-    document.documentElement.dataset.theme = t.mode || 'inherit';
+    const mode = t.mode || 'inherit';
+    for (const [k, v] of Object.entries(runtime.theme)) {
+        if (mode === 'inherit' && v) document.documentElement.style.setProperty(k, v);
+        else document.documentElement.style.removeProperty(k);
+    }
+    document.documentElement.dataset.theme = mode;
     const channels = (runtime.theme['--SmartThemeBlurTintColor'] || '').match(/\d+(?:\.\d+)?/g);
     document.documentElement.style.colorScheme =
-        t.mode === 'light'
+        mode === 'light'
             ? 'light'
-            : t.mode === 'dark'
+            : mode === 'dark'
               ? 'dark'
               : channels && Number(channels[0]) * 0.299 + Number(channels[1]) * 0.587 + Number(channels[2]) * 0.114 > 150
                 ? 'light'
@@ -1298,10 +1306,10 @@ function renderHeaderTabs() {
                 { icon: 'power', label: '数据库功能开关（含未启用模块）', action: () => actions.openFeatureSwitchDialog() },
             ];
             if (cur) {
-                if (!isCharacterKind(cur.kind)) {
+                if (isDatabaseKind(cur.kind)) {
                     items.push({
                         icon: 'tools',
-                        label: isDatabaseKind(cur.kind) ? '运行配置 / 恢复默认' : '整理工具 / 体检',
+                        label: '运行配置 / 恢复默认',
                         action: () => actions.openToolsDialog(cur),
                     });
                 }
@@ -1469,7 +1477,7 @@ function renderCharacterNavPanel(col, d) {
     col.innerHTML = `
         ${navModeHeaderHtml('characters')}
         <div class="panel-subbar char-nav-tools">
-            <span class="muted" style="font-size:11.5px">共 <strong data-char-count>${totalCount}</strong> 张</span>
+            <span class="muted" style="font-size:calc(11.5px * var(--pww-scale))">共 <strong data-char-count>${totalCount}</strong> 张</span>
             <div class="row" style="gap:3px">
                 ${iconBtn('import', '导入角色卡文件 (PNG / JSON / YAML)', 'data-char-act="import"', 'sm')}
                 ${iconBtn('plus', '新建空白角色卡草稿', 'data-char-act="new"', 'sm')}
@@ -1777,7 +1785,7 @@ function renderNavPanel() {
             </select>
         </div>
         <div class="panel-subbar char-nav-tools">
-            <span class="muted" style="font-size:11.5px">${esc(listTitle)} 共 <strong data-lib-count>${countText}</strong> 项</span>
+            <span class="muted" style="font-size:calc(11.5px * var(--pww-scale))">${esc(listTitle)} 共 <strong data-lib-count>${countText}</strong> 项</span>
             <div class="row" style="gap:3px">
                 ${iconBtn('import', `导入${listTitle}并保存到列表`, 'data-nav-act="import-lib"', 'sm')}
                 ${iconBtn('plus', `新建空白/默认${listTitle}`, 'data-nav-act="new-lib"', 'sm')}
@@ -2200,7 +2208,7 @@ function buildCharacterHeroHtml(d) {
             <div class="char-hero-info">
                 <div class="char-hero-top">
                     <strong class="char-hero-name" title="${esc(d.name)}">${esc(d.name)}</strong>
-                    ${metaBits.length ? `<span class="muted" style="font-size:11px">${esc(metaBits.join(' · '))}</span>` : ''}
+                    ${metaBits.length ? `<span class="muted" style="font-size:calc(11px * var(--pww-scale))">${esc(metaBits.join(' · '))}</span>` : ''}
                 </div>
                 <div class="char-hero-row">
                     <span class="char-hero-label">${svg('worldbook', 12)} 世界书：</span>
@@ -2209,7 +2217,7 @@ function buildCharacterHeroHtml(d) {
                             ? `<button type="button" class="chip active" data-hero-act="jump-world" title="点击跳转到绑定世界书「${esc(primaryWorld)}」">${esc(primaryWorld)}${auxWorlds.length ? ` +${auxWorlds.length}` : ''} ${svg('external', 11)}</button>`
                             : auxWorlds.length
                               ? `<button type="button" class="chip active" data-hero-act="jump-world" title="点击跳转到附加世界书">附加 ${auxWorlds.length} 本 ${svg('external', 11)}</button>`
-                              : '<span class="muted" style="font-size:11.5px">未绑定</span>'
+                              : '<span class="muted" style="font-size:calc(11.5px * var(--pww-scale))">未绑定</span>'
                     }
                     <button type="button" class="mini-btn" data-hero-act="bind-world" ${d.avatar ? '' : 'disabled'}>${svg('link', 12)} ${worldCount ? '修改绑定' : '绑定世界书'}</button>
                     <button type="button" class="mini-btn" data-hero-act="edit-tags" ${d.avatar ? '' : 'disabled'}>${svg('tag', 12)} 标签 (${tags.length})</button>
@@ -2311,18 +2319,10 @@ function renderSingleListPanel() {
                 ${statusBadge}
             </div>
             <div class="panel-head-actions">
-                ${iconBtn('save', '保存 (Ctrl+S)', 'data-doc-act="save"', 'sm primary')}
-                ${isDb ? iconBtn('play', '应用到数据库 / 当前聊天', 'data-doc-act="apply"', 'sm') : ''}
-                ${iconBtn('rename', '重命名', 'data-doc-act="rename"', 'sm')}
+                <button type="button" class="mini-btn primary" data-doc-act="save" title="保存并应用 (Ctrl+S)">${svg('save', 12)} 保存并应用</button>
                 ${iconBtn('saveAs', '另存为副本', 'data-doc-act="save-as"', 'sm')}
-                ${iconBtn('import', isChar ? '导入新角色卡 (PNG / JSON / YAML)' : '导入文件并保存到列表（不切换当前生效预设）', 'data-doc-act="import"', 'sm')}
-                ${isChar ? iconBtn('upload', '更新角色卡（覆盖当前卡并保留聊天记录）', `data-doc-act="update-card" ${d.avatar ? '' : 'disabled'}`, 'sm') : ''}
-                ${iconBtn('export', isChar ? '导出角色卡 (PNG / JSON)' : '导出文件', 'data-doc-act="export"', 'sm')}
-                ${iconBtn('stats', 'Token 与字数统计', 'data-doc-act="stats"', 'sm')}
-                ${d.kind === 'worldbook' ? iconBtn('link', '世界书绑定管理', 'data-doc-act="bind"', 'sm') : ''}
-                ${isChar ? iconBtn('chat', '查看该角色全部聊天记录', `data-doc-act="open-chats" ${d.avatar ? '' : 'disabled'}`, 'sm') : ''}
-                ${isChar ? iconBtn('external', '跳转到绑定世界书界面', 'data-doc-act="jump-world"', 'sm') : ''}
-                ${iconBtn('trash', d.sourceName ? (isChar ? '删除此角色卡（自动备份）' : '删除此文档（自动备份）') : '移除此草稿标签', 'data-doc-act="delete"', 'sm danger')}
+                ${iconBtn('rename', '重命名', 'data-doc-act="rename"', 'sm')}
+                ${iconBtn('more', '更多文档操作', 'data-doc-act="doc-more"', 'sm')}
             </div>
         </div>
         <div class="panel-subbar">
@@ -2437,18 +2437,50 @@ function wireSingleListEvents(col, tab, d, list, hits) {
         save: () => actions.saveDraft(d, false),
         rename: () => actions.renameDocument(d, tab),
         'save-as': () => actions.saveDraft(d, true),
-        import: () => actions.importIntoDraft(d),
-        'update-card': () => actions.importCharacterFile(d, true),
-        apply: () => actions.applyDatabaseDraft(d),
-        export: () => actions.exportDraft(d),
-        stats: () => actions.tokenStatsDialog(d),
-        bind: () => actions.openBindingsDialog(d),
-        'bind-world': () => actions.openCharacterWorldBindingsDialog(d),
-        'jump-world': () => actions.jumpToCharacterWorldbook(d),
-        'edit-tags': () => actions.openCharacterTagsDialog(d),
-        'edit-avatar': () => actions.changeCharacterAvatar(d),
-        'open-chats': () => openChatsForCharacter(d.avatar, d.name),
-        delete: () => actions.deleteDocument(d, tab),
+        'doc-more': (btn) => {
+            const menuItems = [
+                {
+                    icon: 'import',
+                    label: isChar ? '导入新角色卡 (PNG / JSON / YAML)' : '导入并保存到列表',
+                    action: () => actions.importIntoDraft(d),
+                },
+                {
+                    icon: 'export',
+                    label: isChar ? '导出角色卡 (PNG / JSON)' : '导出文件',
+                    action: () => actions.exportDraft(d),
+                },
+                { icon: 'stats', label: 'Token 与字数统计', action: () => actions.tokenStatsDialog(d) },
+            ];
+            if (d.kind === 'worldbook') {
+                menuItems.push({ icon: 'link', label: '世界书绑定管理', action: () => actions.openBindingsDialog(d) });
+            }
+            if (isChar) {
+                menuItems.push(
+                    {
+                        icon: 'chat',
+                        label: '查看该角色全部聊天记录',
+                        disabled: !d.avatar,
+                        action: () => openChatsForCharacter(d.avatar, d.name),
+                    },
+                    {
+                        icon: 'external',
+                        label: '跳转到绑定世界书界面',
+                        action: () => actions.jumpToCharacterWorldbook(d),
+                    },
+                );
+            }
+            menuItems.push('-', {
+                icon: 'trash',
+                label: d.sourceName
+                    ? isChar
+                        ? '删除此角色卡（自动备份）'
+                        : '删除此文档（自动备份）'
+                    : '移除此草稿标签',
+                danger: true,
+                action: () => actions.deleteDocument(d, tab),
+            });
+            showPopMenu(btn, menuItems);
+        },
         replace: () => actions.globalFindReplace(d),
         'select-all': () => {
             const ids = list.map((e) => e.id);
@@ -2807,7 +2839,7 @@ function renderCompareSide(col, side, tab, d, pMap) {
         <div class="panel-head">
             <div class="panel-head-title" style="gap:5px">
                 <span class="badge">${label}</span>
-                <select data-cmp-pick="${side}" style="flex:1;min-width:80px;padding:3px 6px;font-size:12px">
+                <select data-cmp-pick="${side}" style="flex:1;min-width:80px;padding:3px 6px;font-size:calc(12px * var(--pww-scale))">
                     <option value="">选择已打开标签…</option>
                     ${tabOptions}
                 </select>
@@ -2815,7 +2847,7 @@ function renderCompareSide(col, side, tab, d, pMap) {
             <div class="panel-head-actions">
                 ${!isLeft ? iconBtn('swap', '互换 A / B 两侧', 'data-cmp-swap', 'sm') : ''}
                 ${!isLeft ? iconBtn('diffAll', '全本批量比对与合并', 'data-cmp-all', 'sm') : ''}
-                ${d ? iconBtn('save', '保存此侧文档', 'data-cmp-save', 'sm primary') : ''}
+                ${d ? iconBtn('save', '保存并应用此侧文档', 'data-cmp-save', 'sm primary') : ''}
             </div>
         </div>
         <div class="panel-subbar">
@@ -2826,7 +2858,7 @@ function renderCompareSide(col, side, tab, d, pMap) {
             </div>
             ${
                 isLeft
-                    ? `<select data-cmp-filter style="padding:3px 5px;font-size:11.5px">
+                    ? `<select data-cmp-filter style="padding:3px 5px;font-size:calc(11.5px * var(--pww-scale))">
                           <option value="all" ${state.compare.filter === 'all' ? 'selected' : ''}>全部</option>
                           <option value="diff" ${state.compare.filter === 'diff' ? 'selected' : ''}>仅差异</option>
                           <option value="content" ${state.compare.filter === 'content' ? 'selected' : ''}>正文不同</option>
@@ -3132,7 +3164,7 @@ function renderRightInspector() {
                     headBadge.innerHTML = isDirtyNow
                         ? '<span class="lamp-dot is-dirty"></span>未保存'
                         : isLiveNow
-                          ? '<span class="lamp-dot is-live"></span>酒馆当前'
+                          ? '<span class="lamp-dot is-live"></span>当前生效'
                           : '已同步';
                 }
                 const updated = findEntry(d, id);
@@ -3148,6 +3180,9 @@ function renderRightInspector() {
                     renderSingleListPanel();
                     renderRightInspector();
                 }
+            },
+            refreshList() {
+                renderSingleListPanel();
             },
         },
     });
@@ -3166,7 +3201,7 @@ function renderFooter() {
         </div>
         <div class="footer-right">
             <span>酒馆工作台 0.7.2 · 🟢当前生效 🟡已改未存</span>
-            <span>Ctrl+S 保存 · Esc 关闭</span>
+            <span>${state.compare.enabled ? '对比模式 · Ctrl+S 同时保存并应用两侧' : 'Ctrl+S 保存并应用'} · Esc 关闭</span>
         </div>
     `;
 }
@@ -3257,6 +3292,18 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault();
         if (navPaneMode === 'chats' && !state.compare.enabled) {
             run(() => chatCtrl.saveActiveChat())();
+        } else if (state.compare.enabled) {
+            run(async () => {
+                const targets = [];
+                for (const id of [state.compare.leftTabId, state.compare.rightTabId]) {
+                    if (!id || targets.some((x) => x.id === id)) continue;
+                    const t = tabById(id);
+                    const td = t ? await ensureDraftLoaded(id) : null;
+                    if (td) targets.push({ id, draft: td });
+                }
+                if (!targets.length) throw Error('没有可保存的对比文档');
+                for (const item of targets) await actions.saveDraft(item.draft, false);
+            })();
         } else {
             run(() => actions.saveDraft(activeDraft(), false))();
         }

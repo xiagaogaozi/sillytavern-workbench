@@ -85,7 +85,7 @@ function fieldDiffSummary(leftEntry, rightEntry) {
     return `<div class="compare-field-diff"><h4>配置字段差异（${diffs.length} 项）</h4>${diffs
         .map(
             (d) =>
-                `<div class="row" style="justify-content:space-between;font-size:11.5px;padding:2px 0;border-top:1px dashed var(--line)"><code>${esc(d.key)}</code><span><del class="pww-diff-del">${esc(d.left)}</del> → <ins class="pww-diff-ins">${esc(d.right)}</ins></span></div>`,
+                `<div class="row" style="justify-content:space-between;font-size:calc(11.5px * var(--pww-scale));padding:2px 0;border-top:1px dashed var(--line)"><code>${esc(d.key)}</code><span><del class="pww-diff-del">${esc(d.left)}</del> → <ins class="pww-diff-ins">${esc(d.right)}</ins></span></div>`,
         )
         .join('')}</div>`;
 }
@@ -216,7 +216,7 @@ export function renderCompareInspector(container, { leftDraft, rightDraft, pair,
                            </div>
                        </div>`
                     : `${settingsHtml}
-                       <div class="row" style="justify-content:space-between;font-size:11.5px">
+                       <div class="row" style="justify-content:space-between;font-size:calc(11.5px * var(--pww-scale))">
                            <span class="muted">左侧 A（删掉项红底划掉） ↔ 右侧 B（新增项绿底高亮）</span>
                            <span class="badge">${diffRes.changedCount} 处行变动</span>
                        </div>
@@ -675,6 +675,28 @@ function renderContentTab(body, { draft, e, isPreset, isWorld, isChar, isDb, can
     }
 }
 
+/** 绑定右栏参数表单，使所有控件改动自动同步到草稿（无需再点“保存到草稿”）。 */
+function bindAutoDraftForm(body, syncFn) {
+    const form = $('[data-meta-form]', body);
+    if (!form) return;
+    form.onsubmit = (ev) => ev.preventDefault();
+    let timer;
+    const flush = (strict = true, ev = null) => {
+        clearTimeout(timer);
+        try {
+            const v = values(form);
+            syncFn(v, ev);
+        } catch (err) {
+            if (strict) notify(err.message, true);
+        }
+    };
+    form.addEventListener('input', (ev) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => flush(false, ev), 180);
+    });
+    form.addEventListener('change', (ev) => flush(true, ev));
+}
+
 function renderMetaTab(body, { draft, e, isPreset, isWorld, isChar, actions }) {
     if (isChar) {
         ensureCharacterShape(draft.raw);
@@ -715,21 +737,18 @@ function renderMetaTab(body, { draft, e, isPreset, isWorld, isChar, actions }) {
             </div>
             <div class="settings-card full">
                 <div class="settings-card-head">
-                    <strong>${svg('image', 13)} 角色图片与更新</strong>
+                    <strong>${svg('image', 13)} 角色图片与整卡替换</strong>
                     <div class="row" style="gap:4px">
                         <button type="button" class="mini-btn" data-char-act="edit-avatar">${svg('image', 12)} 修改图片</button>
-                        <button type="button" class="mini-btn" data-char-act="update-card">${svg('upload', 12)} 更新角色卡</button>
+                        <button type="button" class="mini-btn" data-char-act="update-card" title="导入本地新版角色卡文件覆盖当前角色卡（保留聊天与标签）">${svg('cardSync', 12)} 更新角色卡</button>
                     </div>
                 </div>
             </div>
-            <div class="form-actions full"><button type="submit" class="primary">${svg('apply', 14)} 保存卡片属性到草稿</button></div>
         </form>`;
         for (const b of $$('[data-char-act]', body)) {
             b.onclick = run(() => actions.runDocAction(b.dataset.charAct));
         }
-        $('[data-meta-form]', body).onsubmit = run((ev) => {
-            ev.preventDefault();
-            const v = values(ev.target);
+        bindAutoDraftForm(body, (v) => {
             actions.mutateEntry(
                 e.id,
                 '修改角色卡属性',
@@ -748,9 +767,8 @@ function renderMetaTab(body, { draft, e, isPreset, isWorld, isChar, actions }) {
                         role: v.dp_role || 'system',
                     };
                 },
-                true,
+                false,
             );
-            notify('角色卡属性已更新到草稿');
         });
         return;
     }
@@ -774,11 +792,9 @@ function renderMetaTab(body, { draft, e, isPreset, isWorld, isChar, actions }) {
                 ${field('sp_cond_on', '条件启用 (SPreset)', Boolean(cond.enabled), 'checkbox')}
             </div>
             ${field('sp_cond_expr', '条件表达式 (JS 返回布尔值)', cond.condition || '', 'textarea', { rows: 3, wide: true })}
-            <div class="form-actions full"><button type="submit" class="primary">${svg('apply', 14)} 保存参数到草稿</button></div>
         </form>`;
-        $('[data-meta-form]', body).onsubmit = run((ev) => {
-            ev.preventDefault();
-            const v = values(ev.target);
+        bindAutoDraftForm(body, (v, ev) => {
+            const prevPos = Number(e.raw.injection_position || 0);
             actions.mutateEntry(
                 e.id,
                 '修改预设注入参数',
@@ -803,9 +819,11 @@ function renderMetaTab(body, { draft, e, isPreset, isWorld, isChar, actions }) {
                     }
                     if (Object.keys(nextCfg).length) writeSpecialConfig(draft.raw, nextCfg);
                 },
-                true,
+                false,
             );
-            notify('注入与条件参数已更新到草稿');
+            if (ev?.type === 'change' && Number(v.injection_position || 0) !== prevPos) {
+                actions.refreshList?.();
+            }
         });
         return;
     }
@@ -893,11 +911,9 @@ function renderMetaTab(body, { draft, e, isPreset, isWorld, isChar, actions }) {
                     ${field('matchCreatorNotes', '匹配创作者注释', Boolean(e.raw.matchCreatorNotes), 'checkbox')}
                 </div>
             </details>
-            <div class="form-actions full"><button type="submit" class="primary">${svg('apply', 14)} 保存参数到草稿</button></div>
         </form>`;
-        $('[data-meta-form]', body).onsubmit = run((ev) => {
-            ev.preventDefault();
-            const v = values(ev.target);
+        bindAutoDraftForm(body, (v, ev) => {
+            const needListRefresh = ev?.type === 'change' && ['strategy', 'order'].includes(ev?.target?.name);
             actions.mutateEntry(
                 e.id,
                 '修改世界书参数',
@@ -935,9 +951,9 @@ function renderMetaTab(body, { draft, e, isPreset, isWorld, isChar, actions }) {
                     item.raw.matchScenario = Boolean(v.matchScenario);
                     item.raw.matchCreatorNotes = Boolean(v.matchCreatorNotes);
                 },
-                true,
+                false,
             );
-            notify('世界书参数已更新到草稿');
+            if (needListRefresh) actions.refreshList?.();
         });
         return;
     }
@@ -980,11 +996,8 @@ function renderMetaTab(body, { draft, e, isPreset, isWorld, isChar, actions }) {
                     ${field('doc_finalSystemDirective', '全局最终系统指令（作用于整份剧情推进预设）', draft.raw.finalSystemDirective || '', 'textarea', { rows: 4, wide: true })}
                 </div>
             </details>
-            <div class="form-actions full"><button type="submit" class="primary">${svg('apply', 14)} 保存参数</button></div>
         </form>`;
-        $('[data-meta-form]', body).onsubmit = run((ev) => {
-            ev.preventDefault();
-            const v = values(ev.target);
+        bindAutoDraftForm(body, (v) => {
             actions.mutateEntry(
                 e.id,
                 '修改剧情任务参数',
@@ -1011,9 +1024,8 @@ function renderMetaTab(body, { draft, e, isPreset, isWorld, isChar, actions }) {
                         draft.raw.finalSystemDirective = v.doc_finalSystemDirective;
                     }
                 },
-                true,
+                false,
             );
-            notify('任务参数已更新到草稿');
         });
         return;
     }
@@ -1065,11 +1077,8 @@ function renderMetaTab(body, { draft, e, isPreset, isWorld, isChar, actions }) {
                     ${field('doc_globalInjectionConfig', '全局注入配置 JSON（作用于整份表格模板）', globalInj, 'json', { rows: 5, wide: true })}
                 </div>
             </details>
-            <div class="form-actions full"><button type="submit" class="primary">${svg('apply', 14)} 保存参数</button></div>
         </form>`;
-        $('[data-meta-form]', body).onsubmit = run((ev) => {
-            ev.preventDefault();
-            const v = values(ev.target);
+        bindAutoDraftForm(body, (v) => {
             actions.mutateEntry(
                 e.id,
                 '修改表格导出、SQL 注入与更新配置',
@@ -1108,9 +1117,8 @@ function renderMetaTab(body, { draft, e, isPreset, isWorld, isChar, actions }) {
                         draft.raw.mate.globalInjectionConfig = v.doc_globalInjectionConfig;
                     }
                 },
-                true,
+                false,
             );
-            notify('表格配置已更新到草稿');
         });
         return;
     }

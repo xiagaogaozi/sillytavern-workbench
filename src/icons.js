@@ -63,6 +63,7 @@ const PATHS = {
     external: '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/>',
     chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
     fileText: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>',
+    cardSync: '<rect x="3" y="4" width="13" height="16" rx="2"/><circle cx="9.5" cy="10" r="2"/><path d="M6.5 15.5a3.2 3.2 0 0 1 6 0"/><path d="M19 8v8m0 0-2-2m2 2 2-2"/>',
 };
 
 export function svg(name, size = 15, cls = '') {

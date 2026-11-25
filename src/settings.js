@@ -258,17 +258,17 @@ export async function openSettings(env, runtime) {
         `<section class="settings-card">
             <div class="settings-card-head">
                 <strong>${svg('sliders', 14)} 界面显示</strong>
-                <span class="muted">配色自动跟随酒馆主题</span>
+                <span class="muted">支持跟随酒馆，或独立切换灰底/白底粉色主题</span>
             </div>
             <div class="inspector-grid">
                 ${field('themeMode', '主题模式', theme.mode || 'inherit', 'select', {
                     choices: [
                         ['inherit', '跟随酒馆'],
-                        ['dark', '深色'],
-                        ['light', '浅色'],
+                        ['dark', '深色（中性灰 + 粉）'],
+                        ['light', '浅色（白底 + 粉）'],
                     ],
                 })}
-                ${field('fontScale', '字号比例', theme.fontScale || 1, 'number')}
+                ${field('fontScale', '字号比例（如 0.85 ~ 1.6）', theme.fontScale || 1, 'number')}
                 ${field('rowHeight', '条目最小高度 (px)', theme.rowHeight || 52, 'number')}
             </div>
             <div class="check-grid">
@@ -315,7 +315,7 @@ export async function openSettings(env, runtime) {
             onSubmit: async (v) => {
                 env.config.theme = {
                     mode: v.themeMode,
-                    fontScale: Number(v.fontScale) || 1,
+                    fontScale: Math.min(2, Math.max(0.7, Number(v.fontScale) || 1)),
                     rowHeight: Math.max(40, Number(v.rowHeight) || 52),
                     fullscreen: Boolean(v.fullscreen),
                 };

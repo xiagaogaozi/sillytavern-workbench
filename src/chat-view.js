@@ -362,7 +362,7 @@ export function createChatController(hostApi) {
         let mode = 'edits';
         if (hasFilter) {
             const v = await modal(
-                '保存修改到聊天记录 · ' + st.active.fileId,
+                '保存并应用修改到聊天记录 · ' + st.active.fileId,
                 field(
                     'mode',
                     '写入方式',
@@ -375,15 +375,15 @@ export function createChatController(hostApi) {
                         ],
                     },
                 ) + '<p class="muted">保存时酒馆会自动在 backups 目录保留旧版本备份。</p>',
-                { submit: '确认保存' },
+                { submit: '保存并应用' },
             );
             if (!v) return;
             mode = v.mode;
         } else {
             const ok = await modal(
-                '保存聊天记录修改 · ' + st.active.fileId,
+                '保存并应用聊天记录修改 · ' + st.active.fileId,
                 `<p>即将写回手动编辑的 <strong>${editCount}</strong> 楼${delCount ? `并移除 <strong>${delCount}</strong> 楼` : ''}，酒馆将自动创建备份。</p>`,
-                { submit: '保存' },
+                { submit: '保存并应用' },
             );
             if (!ok) return;
         }
@@ -615,7 +615,7 @@ export function createChatController(hostApi) {
             ${navHeadHtml}
             ${charScopeBanner}
             <div class="panel-subbar char-nav-tools">
-                <span class="muted" style="font-size:11.5px">聊天 <strong data-chat-count>${totalAll}</strong> 条</span>
+                <span class="muted" style="font-size:calc(11.5px * var(--pww-scale))">聊天 <strong data-chat-count>${totalAll}</strong> 条</span>
                 <div class="row" style="gap:3px">
                     ${iconBtn('import', '导入聊天记录 (.jsonl / .json / .txt)', 'data-chat-act="import"', 'sm')}
                     ${iconBtn('refresh', '刷新聊天记录汇总', 'data-chat-act="refresh"', 'sm')}
@@ -787,11 +787,12 @@ export function createChatController(hostApi) {
                       return `<button type="button" class="chat-tag-chip ${cls}" data-tag-cycle="${esc(t.tag)}" title="点击切换：不限 → 选择提取 → 排除剔除（出现 ${t.count} 次 / ${t.msgCount} 楼）">${prefix}&lt;${esc(t.tag)}&gt;<span>${t.count}</span></button>`;
                   })
                   .join('')
-            : '<span class="muted" style="font-size:11.5px">该聊天未检测到成对 XML/HTML 标签，可手动输入标签名。</span>';
+            : '<span class="muted" style="font-size:calc(11.5px * var(--pww-scale))">该聊天未检测到成对 XML/HTML 标签，可手动输入标签名。</span>';
 
         const slice = floors.slice(0, st.dirLimit);
         const hasMore = slice.length < floors.length;
 
+        // 保留 618 处等字号缩放
         col.innerHTML = `
             <div class="panel-head">
                 <div class="panel-head-title">
@@ -800,12 +801,9 @@ export function createChatController(hostApi) {
                     ${statusBadge}
                 </div>
                 <div class="panel-head-actions">
-                    ${iconBtn('save', '保存修改回聊天记录', 'data-chat-mid="save"', 'sm primary')}
+                    <button type="button" class="mini-btn primary" data-chat-mid="save" title="保存并应用修改回聊天记录 (Ctrl+S)">${svg('save', 12)} 保存并应用</button>
                     ${iconBtn('rename', '重命名聊天文件', 'data-chat-mid="rename"', 'sm')}
-                    ${iconBtn('import', '导入聊天记录', 'data-chat-mid="import"', 'sm')}
-                    ${iconBtn('fileText', '导出 TXT 纯文本版', 'data-chat-mid="export-txt"', 'sm')}
-                    ${iconBtn('export', '导出聊天记录版 (.jsonl)', 'data-chat-mid="export-jsonl"', 'sm')}
-                    ${iconBtn('trash', '删除此聊天记录', 'data-chat-mid="delete"', 'sm danger')}
+                    ${iconBtn('more', '更多聊天操作', 'data-chat-mid="more"', 'sm')}
                 </div>
             </div>
             <div class="panel-subbar">
@@ -846,7 +844,7 @@ export function createChatController(hostApi) {
                         </label>
                     </div>
                     <div class="chat-detected-wrap">
-                        <div class="muted" style="font-size:11px;margin-bottom:4px">探测到的标签（点击切换：不限 → ✓选择 → ✕排除）：</div>
+                        <div class="muted" style="font-size:calc(11px * var(--pww-scale));margin-bottom:4px">探测到的标签（点击切换：不限 → ✓选择 → ✕排除）：</div>
                         <div class="chat-tag-pool">${detectedHtml}</div>
                     </div>
                     <div class="chat-filter-checks">
@@ -910,6 +908,19 @@ export function createChatController(hostApi) {
             'export-txt': () => exportChatDialog('txt'),
             'export-jsonl': () => exportChatDialog('jsonl'),
             delete: () => deleteChats([{ avatar: c.avatar, fileName: c.fileName, charName: c.charName }]),
+            more: (btn) =>
+                hostApi.showMenu?.(btn, [
+                    { icon: 'import', label: '导入聊天记录', action: () => importChatDialog() },
+                    { icon: 'fileText', label: '导出 TXT 纯文本版', action: () => exportChatDialog('txt') },
+                    { icon: 'export', label: '导出聊天记录版 (.jsonl)', action: () => exportChatDialog('jsonl') },
+                    '-',
+                    {
+                        icon: 'trash',
+                        label: '删除此聊天记录',
+                        danger: true,
+                        action: () => deleteChats([{ avatar: c.avatar, fileName: c.fileName, charName: c.charName }]),
+                    },
+                ]),
             'clear-tags': () => {
                 st.filter.includeTags = [];
                 st.filter.excludeTags = [];
@@ -918,7 +929,7 @@ export function createChatController(hostApi) {
             },
         };
         for (const b of $$('[data-chat-mid]', col)) {
-            b.onclick = run(() => midActions[b.dataset.chatMid]?.());
+            b.onclick = run(() => midActions[b.dataset.chatMid]?.(b));
         }
 
         // 点击探测标签胶囊：不限 → 选择 → 排除 → 不限
@@ -1126,7 +1137,7 @@ export function createChatController(hostApi) {
                             ? `<button type="button" class="mini-btn" data-chat-right="reset-all" title="放弃全部手动编辑与删除">重置全部</button>`
                             : ''
                     }
-                    <button type="button" class="mini-btn primary" data-chat-right="save">${svg('save', 12)} 保存</button>
+                    <button type="button" class="mini-btn primary" data-chat-right="save">${svg('save', 12)} 保存并应用</button>
                 </div>
             </div>
             <div class="panel-subbar chat-pager-bar">
@@ -1139,7 +1150,7 @@ export function createChatController(hostApi) {
                 </div>
                 <div class="row" style="gap:4px">
                     <input type="number" min="1" max="${c.messages.length}" class="chat-jump-input" data-jump-floor-no placeholder="跳楼层" title="输入楼层号后回车跳转">
-                    <select data-page-size title="每页显示楼层数" style="padding:2px 5px;font-size:11.5px">
+                    <select data-page-size title="每页显示楼层数" style="padding:2px 5px;font-size:calc(11.5px * var(--pww-scale))">
                         ${[10, 20, 50]
                             .map((n) => `<option value="${n}" ${st.pageSize === n ? 'selected' : ''}>${n}楼/页</option>`)
                             .join('')}
@@ -1162,11 +1173,11 @@ export function createChatController(hostApi) {
                                         <header class="chat-floor-head">
                                             <div class="row" style="gap:6px">
                                                 <span class="badge ${f.isUser ? 'badge-user' : 'badge-char'}">#${f.floorNo} · ${esc(f.name)}</span>
-                                                ${f.sendDate ? `<span class="muted" style="font-size:11px">${esc(f.sendDate)}</span>` : ''}
+                                                ${f.sendDate ? `<span class="muted" style="font-size:calc(11px * var(--pww-scale))">${esc(f.sendDate)}</span>` : ''}
                                                 ${f.isEdited ? '<span class="badge badge-dirty" data-floor-flag>已手动编辑</span>' : f.changedByFilter ? '<span class="badge badge-live" data-floor-flag>已按标签筛选</span>' : '<span class="badge" data-floor-flag>原文</span>'}
                                             </div>
                                             <div class="row" style="gap:3px">
-                                                <span class="muted" style="font-size:11px" data-floor-chars="${f.floorIndex}">${f.text.length} 字</span>
+                                                <span class="muted" style="font-size:calc(11px * var(--pww-scale))" data-floor-chars="${f.floorIndex}">${f.text.length} 字</span>
                                                 ${
                                                     f.isEdited
                                                         ? `<button type="button" class="mini-btn" data-floor-act="restore-filtered" data-floor-idx="${f.floorIndex}" title="还原为当前标签筛选后的原文（保持标签筛选）">还原原文</button>`
