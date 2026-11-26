@@ -201,7 +201,7 @@ function tabView(tab) {
 
 function buildMetaSnapshot() {
     return {
-        schemaVersion: 5,
+        schemaVersion: 6,
         tabs: state.tabs,
         activeTabId: state.activeTabId,
         compare: state.compare,
@@ -2466,6 +2466,7 @@ function wireSingleListEvents(col, tab, d, list, hits) {
     const applySearch = () => {
         v.search = searchInput.value;
         v.hitCursor = 0;
+        persistMeta();
         const freshList = filteredEntries(d, v);
         const freshHits = collectEntrySearchHits(freshList, v.search);
         if (freshHits.length) tab.activeEntryId = freshHits[0].id;
@@ -3303,12 +3304,15 @@ function renderAll() {
 async function migrateLegacyWorkspaceIfNeeded() {
     const meta = await storeGet(META_STORAGE_KEY);
     if (meta && Array.isArray(meta.tabs)) {
-        const isV5 = Number(meta.schemaVersion || 0) >= 5;
+        const ver = Number(meta.schemaVersion || 0);
+        const isV5 = ver >= 5;
+        const isV6 = ver >= 6;
         state.tabs = meta.tabs
             .filter((t) => isV5 || !t.liveKey || t.dirty)
             .map((t) => ({
                 ...t,
                 name: String(t.name || '').replace(/^当前\s*·\s*/, ''),
+                view: !isV6 && t.view ? { ...t.view, searchMode: 'filter' } : t.view,
             }));
         state.activeTabId = state.tabs.some((t) => t.id === meta.activeTabId)
             ? meta.activeTabId
@@ -3322,7 +3326,7 @@ async function migrateLegacyWorkspaceIfNeeded() {
         if (meta.inspectorTab) state.inspectorTab = meta.inspectorTab;
         if (typeof meta.navCollapsed === 'boolean') state.navCollapsed = meta.navCollapsed;
         if (Array.isArray(meta.receipts)) state.receipts = meta.receipts;
-        if (!isV5) persistMeta();
+        if (!isV6) persistMeta();
         return;
     }
     // 兼容迁移 0.3.1 的旧草稿（仅提取当前文档，丢弃臃肿历史栈以彻底提速）
@@ -3427,6 +3431,9 @@ onHost('theme', (t) => applyTheme(t));
 onHost('activation', (val) => {
     runtime.activeEntries = val || [];
     if (!state.compare.enabled && activeDraft()?.kind === 'worldbook') renderSingleListPanel();
+});
+window.addEventListener('pagehide', () => {
+    void flushAllPendingPersistence();
 });
 
 // 极速启动流程：并行读取宿主快速初始化 + 分片元信息（不强扫 42MB 世界书目录）
