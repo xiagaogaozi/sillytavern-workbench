@@ -61,7 +61,7 @@ export function createChatController(hostApi) {
             skipSystem: false,
             search: '',
         },
-        searchMode: 'jump', // 'jump' 定位跳转 | 'filter' 筛选
+        searchMode: 'filter', // 'filter' 筛选只显示命中 | 'jump' 定位跳转
         hitCursor: 0,
         page: 1,
         pageSize: 20,

@@ -1165,6 +1165,7 @@ export function createActions(ctxApi) {
             if (cur !== next) nextLists = await rpc('world.bind', { name, target, remove: !next });
         }
         ctxApi.runtime().lists = nextLists;
+        ctxApi.refreshView();
         notify('绑定已更新');
     }
 

@@ -73,6 +73,7 @@ let navSelectedNames = new Set();
 let navLibKind = 'preset'; // 当前预设库展示的文档类型（不含角色卡和聊天记录）
 let navLibSearch = '';
 let navLibSortMode = 'default'; // 'default' | 'name'
+let navLibWorldSort = 'category'; // 'category' 分类顺序 | 'default' 默认顺序 | 'name' 字母排序
 let navLibSortDir = 'asc'; // 'asc' | 'desc'
 let navPaneMode = 'library'; // 'library' 预设库 | 'characters' 角色卡库 | 'chats' 聊天记录管理
 let charCatalog = null; // { items: [], allTags: [], currentAvatar: '' }
@@ -183,7 +184,7 @@ function otherCompareDraft() {
 function defaultView() {
     return {
         search: '',
-        searchMode: 'jump', // 'jump' 定位跳转 | 'filter' 筛选
+        searchMode: 'filter', // 'filter' 筛选只显示命中 | 'jump' 定位跳转
         hitCursor: 0,
         status: 'all',
         sort: 'original',
@@ -952,8 +953,10 @@ function mountShell() {
                 <div class="header-brand">
                     ${iconBtn('sidebar', '展开/收起左侧预设库', 'data-top="toggle-nav"', 'sm')}
                 </div>
-                <div class="tab-strip" id="pww-tabs" role="tablist" aria-label="已打开文档标签页"></div>
-                <div class="tab-strip-controls" id="pww-tab-controls"></div>
+                <div class="tab-bar">
+                    <div class="tab-strip" id="pww-tabs" role="tablist" aria-label="已打开文档标签页"></div>
+                    <div class="tab-strip-controls" id="pww-tab-controls"></div>
+                </div>
                 <div class="header-actions" id="pww-top-actions"></div>
             </header>
             <div class="banner-slot" id="pww-banner"></div>
@@ -1112,6 +1115,8 @@ function renderHeaderTabs() {
                 isCurrentLive =
                     Boolean(t.sourceName && t.sourceName === runtime.lists?.currentPreset) ||
                     Boolean(d ? isLiveUnsaved(d) : t.fromLive && !t.sourceName && !t.dirty);
+            } else if (t.kind === 'worldbook') {
+                isCurrentLive = Boolean(t.sourceName && worldbookCategoryInfo(runtime.lists, t.sourceName).isActive);
             } else if (t.kind === 'character') {
                 isCurrentLive = Boolean(t.sourceName && charCatalog?.currentAvatar && t.sourceName === charCatalog.currentAvatar);
             } else if (isDatabaseKind(t.kind)) {
@@ -1323,6 +1328,12 @@ function renderHeaderTabs() {
                 '-',
                 { icon: 'receipt', label: '备份与操作回执', action: () => actions.openReceiptsDialog() },
                 { icon: 'settings', label: '工作台设置与主题', action: () => openSettings(env, runtime) },
+                {
+                    icon: 'closeAll',
+                    label: '一键关闭所有标签页',
+                    disabled: !state.tabs.length,
+                    action: () => closeAllTabs(),
+                },
             );
             showPopMenu(btn, items);
         },
@@ -1586,6 +1597,25 @@ function renderCharacterNavPanel(col, d) {
     }
 }
 
+function worldbookCategoryInfo(lists, name) {
+    const globalSet = new Set(lists?.global || []);
+    const mainWorld = lists?.mainWorld || '';
+    const auxSet = new Set(lists?.auxiliary || []);
+    const chatWorld = lists?.chatWorld || '';
+    const isGlobal = globalSet.has(name);
+    const isMain = Boolean(mainWorld && mainWorld === name);
+    const isAux = auxSet.has(name);
+    const isChat = Boolean(chatWorld && chatWorld === name);
+    const tags = [];
+    if (isGlobal) tags.push('全局');
+    if (isMain) tags.push('角色主');
+    if (isAux) tags.push('角色附');
+    if (isChat) tags.push('聊天');
+    const isLocal = isMain || isAux || isChat;
+    const group = isGlobal ? 'global' : isLocal ? 'local' : 'other';
+    return { isActive: isGlobal || isLocal, group, tags };
+}
+
 function renderNavPanel() {
     if (state.compare.enabled) return;
     const col = $('#pww-col-a');
@@ -1715,16 +1745,35 @@ function renderNavPanel() {
             .join('') +
         '</optgroup>';
 
+    const curSortMode = curKind === 'worldbook' ? navLibWorldSort : navLibSortMode;
     const rawLibEntries = isDb
-        ? dbItems.map((item) => ({ name: item.name, isActive: Boolean(item.isActive) }))
-        : selectableNames.map((name) => ({ name, isActive: curKind === 'preset' && name === curPresetName }));
+        ? dbItems.map((item) => ({ name: item.name, isActive: Boolean(item.isActive), group: 'other', tags: [] }))
+        : curKind === 'worldbook'
+          ? selectableNames.map((name) => {
+                const info = worldbookCategoryInfo(runtime.lists, name);
+                return { name, isActive: info.isActive, group: info.group, tags: info.tags };
+            })
+          : selectableNames.map((name) => ({
+                name,
+                isActive: curKind === 'preset' && name === curPresetName,
+                group: 'other',
+                tags: [],
+            }));
 
     const getVisibleLibEntries = () => {
         const q = navLibSearch.trim().toLowerCase();
         let arr = q ? rawLibEntries.filter((x) => x.name.toLowerCase().includes(q)) : [...rawLibEntries];
-        if (navLibSortMode === 'name') {
+        if (curSortMode === 'name') {
             const mult = navLibSortDir === 'desc' ? -1 : 1;
             arr.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }) * mult);
+        } else if (curKind === 'worldbook' && curSortMode === 'category') {
+            const rank = { global: 0, local: 1, other: 2 };
+            const dir = navLibSortDir === 'desc' ? -1 : 1;
+            arr.sort((a, b) => {
+                const r = rank[a.group] - rank[b.group];
+                if (r !== 0) return r;
+                return a.name.localeCompare(b.name, 'zh-CN', { numeric: true }) * dir;
+            });
         } else if (navLibSortDir === 'desc') {
             arr.reverse();
         }
@@ -1740,36 +1789,59 @@ function renderNavPanel() {
            </div>`
         : '';
 
-    const renderLibItem = (name, isActiveLive) => {
+    const renderLibItem = (entry) => {
+        const { name, isActive: isActiveLive, tags } = entry;
         const checked = navSelectedNames.has(name);
+        const tagText = Array.isArray(tags) && tags.length ? tags.join('·') : '';
+        const tagBadge = tagText ? `<span class="nav-badge">${esc(tagText)}</span>` : '';
+        const liveTip = isActiveLive ? `（${tagText || '当前实际生效'}）` : '';
         if (navSelectMode) {
             return `
-                <label class="nav-item nav-item-check ${checked ? 'active' : ''}" title="${esc(name)}">
+                <label class="nav-item nav-item-check ${checked ? 'active' : ''}" title="${esc(name + liveTip)}">
                     <input type="checkbox" data-nav-pick="${esc(name)}" ${checked ? 'checked' : ''}>
-                    ${isActiveLive ? '<span class="lamp-dot is-live" title="当前实际生效"></span>' : ''}
+                    ${isActiveLive ? `<span class="lamp-dot is-live" title="${esc(tagText || '当前实际生效')}"></span>` : ''}
                     <span class="nav-item-label">${esc(name)}</span>
+                    ${tagBadge}
                 </label>`;
         }
         return `
-            <button type="button" class="nav-item ${d?.kind === curKind && d?.sourceName === name ? 'active' : ''}" data-nav-open-kind="${esc(curKind)}" data-nav-open-name="${esc(name)}" title="${esc(name)}${isActiveLive ? '（当前实际生效）' : ''}">
-                ${isActiveLive ? '<span class="lamp-dot is-live" title="当前实际生效"></span>' : ''}
+            <button type="button" class="nav-item ${d?.kind === curKind && d?.sourceName === name ? 'active' : ''}" data-nav-open-kind="${esc(curKind)}" data-nav-open-name="${esc(name)}" title="${esc(name + liveTip)}">
+                ${isActiveLive ? `<span class="lamp-dot is-live" title="${esc(tagText || '当前实际生效')}"></span>` : ''}
                 <span class="nav-item-label">${esc(name)}</span>
+                ${tagBadge}
             </button>`;
     };
 
     const drawLibListHtml = () => {
         if (dbLoading) return '<span class="muted" style="padding:6px">正在读取列表…</span>';
         const vis = getVisibleLibEntries();
+        let listBody = '';
+        if (!vis.length) {
+            listBody = `<span class="muted" style="padding:4px 6px">${rawLibEntries.length ? '无匹配项' : isDb ? '暂无命名项' : '列表为空'}</span>`;
+        } else if (curKind === 'worldbook' && curSortMode === 'category') {
+            const groups = [
+                ['global', '全局世界书'],
+                ['local', '局部世界书（角色 / 聊天）'],
+                ['other', '其他世界书'],
+            ];
+            listBody = groups
+                .map(([key, label]) => {
+                    const sub = vis.filter((x) => x.group === key);
+                    if (!sub.length) return '';
+                    return `<div class="nav-group-title"><span>${esc(label)}</span><span class="nav-badge">${sub.length}</span></div>` +
+                        sub.map(renderLibItem).join('');
+                })
+                .join('');
+        } else {
+            listBody = vis.map(renderLibItem).join('');
+        }
         return (
             (showUnmatchedLiveRow && !navSelectMode && !navLibSearch.trim()
                 ? `<button type="button" class="nav-item ${d?.kind === curKind && d?.fromLive && !d?.sourceName ? 'active' : ''}" data-nav-live="${esc(curKind)}" title="当前数据库实际生效配置（尚未保存到预设库）">
                        <span class="lamp-dot is-live"></span>
                        <span class="nav-item-label">当前实际生效</span>
                    </button>`
-                : '') +
-            (vis.length
-                ? vis.map((item) => renderLibItem(item.name, item.isActive)).join('')
-                : `<span class="muted" style="padding:4px 6px">${rawLibEntries.length ? '无匹配项' : isDb ? '暂无命名项' : '列表为空'}</span>`)
+                : '') + listBody
         );
     };
 
@@ -1794,8 +1866,9 @@ function renderNavPanel() {
         </div>
         <div class="char-sort-bar">
             <select data-nav-lib-sort title="排序方式">
-                <option value="default" ${navLibSortMode === 'default' ? 'selected' : ''}>默认顺序</option>
-                <option value="name" ${navLibSortMode === 'name' ? 'selected' : ''}>字母排序</option>
+                ${curKind === 'worldbook' ? `<option value="category" ${curSortMode === 'category' ? 'selected' : ''}>分类顺序（全局/局部/其他）</option>` : ''}
+                <option value="default" ${curSortMode === 'default' ? 'selected' : ''}>默认顺序</option>
+                <option value="name" ${curSortMode === 'name' ? 'selected' : ''}>字母排序</option>
             </select>
             <button type="button" class="mini-btn" data-nav-lib-dir title="切换升序 / 降序">${navLibSortDir === 'asc' ? '升序 ↑' : '降序 ↓'}</button>
         </div>
@@ -1889,7 +1962,8 @@ function renderNavPanel() {
     const libSortSel = $('[data-nav-lib-sort]', col);
     if (libSortSel) {
         libSortSel.onchange = () => {
-            navLibSortMode = libSortSel.value;
+            if (curKind === 'worldbook') navLibWorldSort = libSortSel.value;
+            else navLibSortMode = libSortSel.value;
             redrawLibList();
         };
     }
@@ -2345,9 +2419,9 @@ function renderSingleListPanel() {
             ${iconBtn('plus', isChar ? '新增备选开场白' : '新增条目', 'data-doc-act="add-entry"', 'sm')}
             ${isChar ? '' : iconBtn('checkAll', '全选/取消当前列表', 'data-doc-act="select-all"', 'sm')}
         </div>
+        ${bulkBar}
         <div class="panel-scroll" data-list-scroll>
             ${isChar ? buildCharacterHeroHtml(d) : ''}
-            ${bulkBar}
             ${built.html}
             ${isChar ? '' : '<div class="drop-end" data-drop-end>拖放到此处移至末尾</div>'}
         </div>
